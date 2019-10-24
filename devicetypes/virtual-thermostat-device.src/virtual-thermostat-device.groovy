@@ -1,5 +1,5 @@
 metadata {
-	definition (name: "virtual thermostat device", namespace: "JayUK", author: "JayUK") {
+	definition (name: "Virtual Thermostat Device", namespace: "JayUK", author: "JayUK") {
 		capability "Actuator"
 		capability "Refresh"
 		capability "Sensor"
