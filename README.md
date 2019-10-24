@@ -7,7 +7,7 @@ Allows a presence sensor to enable the thermostat when home (no heating when hou
 
 Supports minimum/frost temperature setting, will not allow the temperature to drop below this point
 Supports time zones (4 for weekdays and 4 for weekend days)
-Supports configurable Zone names (name is given through to device handler, zone name changes presence/contact state)
+Supports configurable zone names (name is given through to device handler, the zone name changes to presence/contact state)
 
 
 
