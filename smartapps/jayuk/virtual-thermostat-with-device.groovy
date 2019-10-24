@@ -1,12 +1,12 @@
 definition(
 	name: "Virtual Thermostat With Device and Schedule",
-	namespace: "jayuk",
+	namespace: "JayUK",
 	author: "JayUK",
 	description: "Control a heater in conjunction with any temperature sensor, like a SmartSense Multi.",
 	category: "Green Living",
 	iconUrl: "https://raw.githubusercontent.com/JayUK/SmartThings-VirtualThermostat/master/images/logo-small.png",
 	iconX2Url: "https://raw.githubusercontent.com/JayUK/SmartThings-VirtualThermostat/master/images/logo.png",
-	parent: "jayuk:Virtual Thermostat Manager",
+	parent: "JayUK:Virtual Thermostat Manager",
 )
 
 preferences {
