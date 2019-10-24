@@ -1,181 +1,181 @@
 metadata {
 	definition (name: "Virtual Thermostat Device", namespace: "JayUK", author: "JayUK") {
-	capability "Actuator"
-	capability "Refresh"
-	capability "Sensor"
-	capability "Thermostat"
-	//capability "Thermostat Heating Setpoint"
-	capability "Thermostat Mode"
-	capability "Thermostat Operating State"
-	//capability "Thermostat Setpoint"
-	capability "Temperature Measurement"
-	capability "Health Check"
+		capability "Actuator"
+		capability "Refresh"
+		capability "Sensor"
+		capability "Thermostat"
+		//capability "Thermostat Heating Setpoint"
+		capability "Thermostat Mode"
+		capability "Thermostat Operating State"
+		//capability "Thermostat Setpoint"
+		capability "Temperature Measurement"
+		capability "Health Check"
 
-	command "refresh"
-	command "poll"
-	command "offbtn"
-	command "heatbtn"
-	command "setThermostatMode", ["string"]
-	command "levelUpDown"
-	command "levelUp"
-	command "levelDown"
-	command "heatingSetpointUp"
-	command "heatingSetpointDown"
-	command "log"
-	command "changeMode"
-	command "setVirtualTemperature", ["string"]
-	command "setHeatingStatus", ["boolean"]
-	command "setEmergencyMode", ["boolean"]
-	command "setHeatingOff", ["boolean"]
-    	command "setZoneName", ["string"]
-        
-	attribute "temperatureUnit", "string"
-	attribute "targetTemp", "string"
-	attribute "debugOn", "string"
-	attribute "safetyTempMin", "string"
-	attribute "safetyTempMax", "string"
-	attribute "safetyTempExceeded", "string"
-    	attribute "zoneName", "string"
-}
+		command "refresh"
+		command "poll"
+		command "offbtn"
+		command "heatbtn"
+		command "setThermostatMode", ["string"]
+		command "levelUpDown"
+		command "levelUp"
+		command "levelDown"
+		command "heatingSetpointUp"
+		command "heatingSetpointDown"
+		command "log"
+		command "changeMode"
+		command "setVirtualTemperature", ["string"]
+		command "setHeatingStatus", ["boolean"]
+		command "setEmergencyMode", ["boolean"]
+		command "setHeatingOff", ["boolean"]
+		command "setZoneName", ["string"]
 
-simulator {
-	// TODO: define status and reply messages here
-}
+		attribute "temperatureUnit", "string"
+		attribute "targetTemp", "string"
+		attribute "debugOn", "string"
+		attribute "safetyTempMin", "string"
+		attribute "safetyTempMax", "string"
+		attribute "safetyTempExceeded", "string"
+		attribute "zoneName", "string"
+	}
 
-tiles(scale: 2) {
-	multiAttributeTile(name:"temperature", type:"thermostat", width:6, height:4, canChangeIcon: true) {
-		tileAttribute("device.temperature", key: "PRIMARY_CONTROL") {
-			attributeState("default", label:'${currentValue}°', unit: unitString())
+	simulator {
+		// TODO: define status and reply messages here
+	}
+
+	tiles(scale: 2) {
+		multiAttributeTile(name:"temperature", type:"thermostat", width:6, height:4, canChangeIcon: true) {
+			tileAttribute("device.temperature", key: "PRIMARY_CONTROL") {
+				attributeState("default", label:'${currentValue}°', unit: unitString())
+			}
+
+			tileAttribute("device.thermostatSetpoint", key: "VALUE_CONTROL") {
+				attributeState("default", action: "levelUpDown")
+				attributeState("VALUE_UP", action: "levelUp")
+				attributeState("VALUE_DOWN", action: "levelDown")
+			}
+
+			tileAttribute("device.thermostatOperatingState", key: "OPERATING_STATE") {
+				attributeState("idle",		backgroundColor: "#44B621")
+				attributeState("heating",	backgroundColor: "#FFA81E")
+				attributeState("off",		backgroundColor: "#ddcccc")
+				attributeState("emergency",	backgroundColor: "#e60000")
+			}
+
+			tileAttribute("device.thermostatMode", key: "THERMOSTAT_MODE") {
+				attributeState("off", label:'Off')
+				attributeState("heat", label:'Heat')
+			}
+
+			tileAttribute("device.thermostatSetpoint", key: "HEATING_SETPOINT") {
+				attributeState("default", label:'${currentValue}')
+			}
 		}
-	
-		tileAttribute("device.thermostatSetpoint", key: "VALUE_CONTROL") {
-			attributeState("default", action: "levelUpDown")
-			attributeState("VALUE_UP", action: "levelUp")
-			attributeState("VALUE_DOWN", action: "levelDown")
+
+		valueTile("temp2", "device.temperature", width: 2, height: 2, decoration: "flat") {
+			state("default", label:'${currentValue}°', icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/device.png",
+			backgroundColors: getTempColors(), canChangeIcon: true)
 		}
 
-		tileAttribute("device.thermostatOperatingState", key: "OPERATING_STATE") {
-			attributeState("idle",		backgroundColor: "#44B621")
-			attributeState("heating",	backgroundColor: "#FFA81E")
-			attributeState("off",		backgroundColor: "#ddcccc")
-			attributeState("emergency",	backgroundColor: "#e60000")
+		standardTile("thermostatMode", "device.thermostatMode", width:2, height:2, decoration: "flat") {
+			state("off", 	action:"changeMode", nextState: "updating", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/off_icon.png")
+			state("heat", 	action:"changeMode", nextState: "updating", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_icon.png")
+			state("Updating", label:"", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/cmd_working.png")
 		}
 
-		tileAttribute("device.thermostatMode", key: "THERMOSTAT_MODE") {
-			attributeState("off", label:'Off')
-			attributeState("heat", label:'Heat')
+		standardTile("offBtn", "device.off", width:1, height:1, decoration: "flat") {
+			state("Off", action: "offbtn", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/off_icon.png")
 		}
 
-		tileAttribute("device.thermostatSetpoint", key: "HEATING_SETPOINT") {
-			attributeState("default", label:'${currentValue}')
+		standardTile("heatBtn", "device.canHeat", width:1, height:1, decoration: "flat") {
+			state("Heat", action: "heatbtn", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_icon.png")
+			state "false", label: ''
 		}
-	}
 
-	valueTile("temp2", "device.temperature", width: 2, height: 2, decoration: "flat") {
-		state("default", label:'${currentValue}°', icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/device.png",
-		backgroundColors: getTempColors(), canChangeIcon: true)
-	}
+		standardTile("refresh", "device.refresh", width:2, height:2, decoration: "flat") {
+			state "Refresh", action:"refresh.refresh", icon:"st.secondary.refresh"
+		}
 
-	standardTile("thermostatMode", "device.thermostatMode", width:2, height:2, decoration: "flat") {
-		state("off", 	action:"changeMode", nextState: "updating", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/off_icon.png")
-		state("heat", 	action:"changeMode", nextState: "updating", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_icon.png")
-		state("Updating", label:"", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/cmd_working.png")
-	}
+		valueTile("heatingSetpoint", "device.thermostatSetpoint", width: 1, height: 1) {
+			state("heatingSetpoint", label:'${currentValue}', unit: unitString(), foregroundColor: "#FFFFFF",
+			backgroundColors: [ [value: 0, color: "#FFFFFF"], [value: 7, color: "#FF3300"], [value: 15, color: "#FF3300"] ])
+			state("disabled", label: '', foregroundColor: "#FFFFFF", backgroundColor: "#FFFFFF")
+		}
 
-	standardTile("offBtn", "device.off", width:1, height:1, decoration: "flat") {
-		state("Off", action: "offbtn", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/off_icon.png")
-	}
+		standardTile("heatingSetpointUp", "device.thermostatSetpoint", width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label: '', action:"heatingSetpointUp", icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_arrow_up.png"
+			state "", label: ''
+		}
 
-	standardTile("heatBtn", "device.canHeat", width:1, height:1, decoration: "flat") {
-		state("Heat", action: "heatbtn", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_icon.png")
-		state "false", label: ''
-	}
+		standardTile("heatingSetpointDown", "device.thermostatSetpoint",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'', action:"heatingSetpointDown", icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_arrow_down.png"
+			state "", label: ''
+		}
 
-	standardTile("refresh", "device.refresh", width:2, height:2, decoration: "flat") {
-		state "Refresh", action:"refresh.refresh", icon:"st.secondary.refresh"
-	}
+		/* controlTile("heatSliderControl", "device.thermostatSetpoint", "slider", height: 1, width: 1, range: getRange(), inactiveLabel: false) {
+			state "default", action:"setHeatingSetpoint", backgroundColor:"#FF3300"
+			state "", label: ''
+		} */ 
 
-	valueTile("heatingSetpoint", "device.thermostatSetpoint", width: 1, height: 1) {
-		state("heatingSetpoint", label:'${currentValue}', unit: unitString(), foregroundColor: "#FFFFFF",
-		backgroundColors: [ [value: 0, color: "#FFFFFF"], [value: 7, color: "#FF3300"], [value: 15, color: "#FF3300"] ])
-		state("disabled", label: '', foregroundColor: "#FFFFFF", backgroundColor: "#FFFFFF")
-	}
+		valueTile("zoneName", "device.zoneName",  width: 1, height: 1, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	standardTile("heatingSetpointUp", "device.thermostatSetpoint", width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label: '', action:"heatingSetpointUp", icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_arrow_up.png"
-		state "", label: ''
-	}
+		valueTile("tempName1", "device.name1",  width: 1, height: 1, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	standardTile("heatingSetpointDown", "device.thermostatSetpoint",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'', action:"heatingSetpointDown", icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_arrow_down.png"
-		state "", label: ''
-	}
+		valueTile("tempName2", "device.name2",  width: 1, height: 1, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	/* controlTile("heatSliderControl", "device.thermostatSetpoint", "slider", height: 1, width: 1, range: getRange(), inactiveLabel: false) {
-		state "default", action:"setHeatingSetpoint", backgroundColor:"#FF3300"
-		state "", label: ''
-	} */ 
+		valueTile("tempName3", "device.name3",  width: 1, height: 1, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	valueTile("zoneName", "device.zoneName",  width: 1, height: 1, decoration: "flat") {
-	    	state "default", label:'${currentValue}', defaultState: true
-	}
-  
-	valueTile("tempName1", "device.name1",  width: 1, height: 1, decoration: "flat") {
-		state "default", label:'${currentValue}', defaultState: true
-	}
-  
-	valueTile("tempName2", "device.name2",  width: 1, height: 1, decoration: "flat") {
-		state "default", label:'${currentValue}', defaultState: true
-	}
+		valueTile("tempName4", "device.name4",  width: 1, height: 1, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	valueTile("tempName3", "device.name3",  width: 1, height: 1, decoration: "flat") {
-		state "default", label:'${currentValue}', defaultState: true
-	}
+		valueTile("tempSensor1", "device.temp1",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'${currentValue}°', defaultState: true
+		}
 
-	valueTile("tempName4", "device.name4",  width: 1, height: 1, decoration: "flat") {
-		state "default", label:'${currentValue}', defaultState: true
-	}
+		valueTile("tempSensor2", "device.temp2",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'${currentValue}°', defaultState: true
+		}
 
-	valueTile("tempSensor1", "device.temp1",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'${currentValue}°', defaultState: true
-	}
+		valueTile("tempSensor3", "device.temp3",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'${currentValue}°', defaultState: true
+		}
 
-	valueTile("tempSensor2", "device.temp2",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'${currentValue}°', defaultState: true
-	}
+		valueTile("tempSensor4", "device.temp4",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'${currentValue}°', defaultState: true
+		}
 
-	valueTile("tempSensor3", "device.temp3",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'${currentValue}°', defaultState: true
-	}
+		valueTile("todayTimeLabel", "timelabel", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'Time On Today (HH:MM)', defaultState: true
+		}
 
-	valueTile("tempSensor4", "device.temp4",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'${currentValue}°', defaultState: true
-	}
+		valueTile("yesterdayTimeLabel", "timelabel2", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'Time On Yesterday (HH:MM)', defaultState: true
+		}
 
-	valueTile("todayTimeLabel", "timelabel", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'Time On Today (HH:MM)', defaultState: true
-	}
+		valueTile("todayTime", "device.timeOnToday", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	valueTile("yesterdayTimeLabel", "timelabel2", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'Time On Yesterday (HH:MM)', defaultState: true
-	}
+		valueTile("yesterdayTime", "device.timeOnYesterday", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
+			state "default", label:'${currentValue}', defaultState: true
+		}
 
-	valueTile("todayTime", "device.timeOnToday", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'${currentValue}', defaultState: true
-	}
-
-	valueTile("yesterdayTime", "device.timeOnYesterday", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'${currentValue}', defaultState: true
-	}
-
-	main("temp2")
-	details( ["temperature", "thermostatMode",
-	"heatingSetpointDown", "heatingSetpoint", "heatingSetpointUp",
-	"heatSliderControl", "offBtn", "heatBtn", "refresh",
-	"zoneName", "tempName1", "tempName2", "tempName3", "tempName4",
-	"tempSensor1", "tempSensor2", "tempSensor3", "tempSensor4",
-	"todayTimeLabel", "yesterdayTimeLabel",
-	"todayTime", "yesterdayTime"] )
+		main("temp2")
+		details( ["temperature", "thermostatMode",
+		"heatingSetpointDown", "heatingSetpoint", "heatingSetpointUp",
+		"heatSliderControl", "offBtn", "heatBtn", "refresh",
+		"zoneName", "tempName1", "tempName2", "tempName3", "tempName4",
+		"tempSensor1", "tempSensor2", "tempSensor3", "tempSensor4",
+		"todayTimeLabel", "yesterdayTimeLabel",
+		"todayTime", "yesterdayTime"] )
 	}
 }
 
