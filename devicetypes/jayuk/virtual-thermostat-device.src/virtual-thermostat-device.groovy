@@ -72,22 +72,22 @@ tiles(scale: 2) {
 	}
 
 	valueTile("temp2", "device.temperature", width: 2, height: 2, decoration: "flat") {
-		state("default", label:'${currentValue}°', icon:"https://raw.githubusercontent.com/eliotstocker/SmartThings-VirtualThermostat-WithDTH/master/device.png",
+		state("default", label:'${currentValue}°', icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/device.png",
 		backgroundColors: getTempColors(), canChangeIcon: true)
 	}
 
 	standardTile("thermostatMode", "device.thermostatMode", width:2, height:2, decoration: "flat") {
-		state("off", 	action:"changeMode", nextState: "updating", icon: "https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/off_icon.png")
-		state("heat", 	action:"changeMode", nextState: "updating", icon: "https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/heat_icon.png")
-		state("Updating", label:"", icon: "https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/cmd_working.png")
+		state("off", 	action:"changeMode", nextState: "updating", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/off_icon.png")
+		state("heat", 	action:"changeMode", nextState: "updating", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_icon.png")
+		state("Updating", label:"", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/cmd_working.png")
 	}
 
 	standardTile("offBtn", "device.off", width:1, height:1, decoration: "flat") {
-		state("Off", action: "offbtn", icon: "https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/off_icon.png")
+		state("Off", action: "offbtn", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/off_icon.png")
 	}
 
 	standardTile("heatBtn", "device.canHeat", width:1, height:1, decoration: "flat") {
-		state("Heat", action: "heatbtn", icon: "https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/heat_icon.png")
+		state("Heat", action: "heatbtn", icon: "https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_icon.png")
 		state "false", label: ''
 	}
 
@@ -102,12 +102,12 @@ tiles(scale: 2) {
 	}
 
 	standardTile("heatingSetpointUp", "device.thermostatSetpoint", width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label: '', action:"heatingSetpointUp", icon:"https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/heat_arrow_up.png"
+		state "default", label: '', action:"heatingSetpointUp", icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_arrow_up.png"
 		state "", label: ''
 	}
 
 	standardTile("heatingSetpointDown", "device.thermostatSetpoint",  width: 1, height: 1, canChangeIcon: true, decoration: "flat") {
-		state "default", label:'', action:"heatingSetpointDown", icon:"https://raw.githubusercontent.com/tonesto7/nest-manager/master/Images/Devices/heat_arrow_down.png"
+		state "default", label:'', action:"heatingSetpointDown", icon:"https://github.com/JayUK/SmartThings-VirtualThermostat/raw/master/images/heat_arrow_down.png"
 		state "", label: ''
 	}
 
