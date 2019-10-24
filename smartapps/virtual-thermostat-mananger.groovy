@@ -17,7 +17,7 @@ preferences {
         section("Devices") {
         }
         section {
-            app(name: "thermostats", appName: "Virtual Thermostat With Device and Schedule", namespace: "jayuk", title: "New Thermostat", multiple: true)
+            app(name: "thermostats", appName: "Virtual Thermostat With Device and Schedule", namespace: "JayUK", title: "New Thermostat", multiple: true)
         }
     }
 }
