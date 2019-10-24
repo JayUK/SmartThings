@@ -1,6 +1,6 @@
 definition(
     name: "Virtual Thermostat Manager",
-    namespace: "jayuk",
+    namespace: "JayUK",
     author: "JayUK",
     description: "Control a heater in conjunction with any temperature sensor like a SmartSense Multi, to create a thermostat device in SmartThings",
     category: "Green Living",
