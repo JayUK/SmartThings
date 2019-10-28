@@ -11,25 +11,25 @@ definition(
 // ********************************************************************************************************************
 preferences {
 	section("Choose a temperature sensor(s)... (If multiple sensors are selected, the average value will be used)"){
-		input "sensors", "capability.temperatureMeasurement", title: "Sensor", multiple: true
+		input "sensors", "capability.temperatureMeasurement", title: "Sensor", multiple: true, required: true
 	}
 	section("Select the heater outlet(s)... "){
-		input "outlets", "capability.switch", title: "Outlets", multiple: true
+		input "outlets", "capability.switch", title: "Outlets", multiple: true, required: true
 	}
-	section("Only heat when contact isnt open (optional, leave blank to not require contact sensor)..."){
-		input "motions", "capability.contactSensor", title: "Contact", required: false, multiple: true
+	section("Only heat when a contact isn't open (optional, leave blank to not require contact sensor)..."){
+		input "motions", "capability.contactSensor", title: "Contact", required: false, multiple: true, hideWhenEmpty: true
 	}
- 	section("Only heat when person is present (optional, leave blank to not require presence sensor)..."){
-		input "presences", "capability.presenceSensor", title: "Presence", required: false, multiple: true
+ 	section("Only heat when a person is present (optional, leave blank to not require presence sensor)..."){
+		input "presences", "capability.presenceSensor", title: "Presence", required: false, multiple: true, hideWhenEmpty: true
+	}
+   	section("Presence away temperature: (optional)"){
+		input "awaySetpoint", "decimal", title: "Away Temp (1-40)", range: "1..40", required: false, hideWhenEmpty: "presences"
 	}
 	section("Never go below this temperature (even if heating is turned off): (optional)"){
-		input "emergencySetpoint", "decimal", title: "Emergency Temp", required: false
+		input "emergencySetpoint", "decimal", title: "Emergency Temp (1-30)", range: "1..30", required: false
 	}
-   	section("Away temperature (presence): (optional)"){
-		input "awaySetpoint", "decimal", title: "Away Temp", required: false
-	}
-	section("Temperature Threshold (Don't allow heating to go above or below this amount from set temperature)") {
-		input "threshold", "decimal", "title": "Temperature Threshold", required: false, defaultValue: 1.0
+    section("Temperature Threshold (Don't allow heating to go above or below this amount from set temperature)") {
+		input "threshold", "decimal", "title": "Temperature Threshold (1-10)", range: "1..10", required: false, defaultValue: 1.0
 	}
  	section("Monday to Friday Schedule") {
 		input "zone1", "time", title: "Zone 1 start time", required: true
@@ -59,15 +59,19 @@ preferences {
 		input "zone4WeekendTemperature", "decimal", title: "Zone 4 temperature", defaultValue: 15, required: true
         input "zone4WeekendName", "string", title: "Zone 4 name", defaultValue: "Zone 4 Weekend", required: true
 	}
+    section("Boost") {
+		input "boostDuration", "number", title: "Boost duration (5 - 60 minutes)", range: "5..60", defaultValue: 60, required: true
+		input "boostTemperature", "decimal", title: "Amount to increase temperature by (1-10)", range: "1..10", defaultValue: 1, required: true
+    }
 }
 // ********************************************************************************************************************
 def installed()
 {
 	log.debug "Installed: Running installed"
 	state.deviceID = Math.abs(new Random().nextInt() % 9999) + 1
-	state.lastTemp = null
 	state.contact = true
 	state.presence = true
+    state.boost = false
 	state.previousZoneNamePresence = null
     state.previousZoneNameContact = null
     state.previousZoneTemperature = null
@@ -75,6 +79,8 @@ def installed()
 	state.yesterdayTime = 0
 	state.date = new Date().format("dd-MM-yy")
 	state.lastOn = 0
+    state.previousZoneNameBoost = null
+    state.previousTemperatureBoost = null
 
 	/* Flags to only allow the temperature to be set once by a zone change (to allow a user to manually override the temp until next Zone) */
 	state.zone1Set = false
@@ -122,11 +128,9 @@ def updated() {
 	def thermostat = getThermostat()
 
 	if(thermostat == null) {
-		log.debug "Creating thermostat"
+		log.debug "Updated: Creating thermostat"
 		thermostat = createDevice()
 	}
-
-	state.lastTemp = null
 
 	if(state.todayTime == null) state.todayTime = 0
 	if(state.yesterdayTime == null) state.yesterdayTime = 0
@@ -150,6 +154,7 @@ def updated() {
 		log.debug "Updated: No presence sensor selected"
 	}
 
+	subscribe(thermostat, "thermostatBoost", thermostatBoostHandler)
 	subscribe(thermostat, "thermostatSetpoint", thermostatTemperatureHandler)
 	subscribe(thermostat, "thermostatMode", thermostatModeHandler)
 	thermostat.clearSensorData()
@@ -183,10 +188,53 @@ def temperatureHandler(evt) {
 
 	if ((state.contact && state.presence) || emergencySetpoint) {
 		evaluateRoutine()
-		state.lastTemp = getAverageTemperature()
 	} else {
 		heatingOff()
 	}
+}
+// ********************************************************************************************************************
+def thermostatBoostHandler(evt) {
+	log.debug "ThermostatBoostHandler: Boost has been requested. Boost value: $state.boost"
+      
+    def thermostat = getThermostat()
+    
+    if (state.boost == false) {
+    	log.debug "ThermostatBoostHandler: Not currently boosted, remembering previous values"
+    	state.previousZoneNameBoost = thermostat.currentValue("zoneName")
+        state.previousTemperatureBoost = thermostat.currentValue("thermostatSetpoint")
+    
+    	def boostTemp = thermostat.currentValue("thermostatSetpoint") + boostTemperature
+    
+    	def nowtime = now()
+        
+        // Add one hour to the current time
+		def nowtimePlusOneHour = nowtime + (boostDuration * 60000)
+        def boostEndTime = new Date(nowtimePlusOneHour)
+
+        log.debug "ThermostatBoostHandler: Setting zonename to 'Boosted' and thermostat temperature to $boostTemp"
+        
+    	setThermostat("Boosted" + "\n" + "(" + boostEndTime.format('HH:mm',location.timeZone) + ")",boostTemp)
+       
+    	log.debug "ThermostatBoostHandler: Scheduling boost to be removed in 1 hour"
+    	runIn((boostDuration*60),boostOff)
+  
+  		state.boost = true
+  } else {
+  	log.debug "ThermostatBoostHandler: Already boosted, not doing anything"
+  }    
+	
+  evaluateRoutine()
+}
+// ********************************************************************************************************************
+def boostOff() {
+
+	if (state.boost) {
+		log.debug "BoostOff: Restoring previous values, Zonename: $state.previousZoneNameBoost Temperature: state.previousTemperatureBoost"
+		state.boost = false
+        setThermostat(state.previousZoneNameBoost,state.previousTemperatureBoost)
+	} else {
+    	log.debug "BoostOff: Dont have to reset boosted Zone names or temperature due to thermostat temperature or zone change during boost period"
+    }
 }
 // ********************************************************************************************************************
 def motionHandler(evt) {
@@ -195,9 +243,8 @@ def motionHandler(evt) {
     state.contact = true
     
     for(motionSensor in motions) {
-    	log.debug "MotionHandler: Sensor - $motionSensor"
-		
-        if (motionSensor.currentValue == "open") {
+    			
+        if (motionSensor.ContactState == "open") {
 			log.debug "MotionHandler: Contact sensor open: $motionSensor"
             state.contact = false
         }
@@ -206,11 +253,10 @@ def motionHandler(evt) {
     if (state.contact) {
     	log.debug "MotionHandler: Setting zone name back to the previous zone name (temporary until we check what Zone we should be in: $state.previousZoneName"
         thermostat.setZoneName(state.previousZoneNameContact)
-        state.lastTemp = getAverageTemperature()  
         evaluateRoutine()                  
 	} else {
         log.debug "MotionHandler: Contact sensor open - Turn heating off"
-		state.previousZoneNameContact = thermostat.currentvalue("zoneName")
+		state.previousZoneNameContact = thermostat.currentValue("zoneName")
 		thermostat.setZoneName("Contact: Open")
 		heatingOff()
 	}
@@ -223,8 +269,7 @@ def presenceHandler(evt) {
 
     // Lets loop through all the presence sensors and check their status
     for(presenceSensor in presences) {
-        log.debug "PresenceHandler: Sensor loop"
-
+        
         if (presenceSensor.currentPresence == "not present") {
             log.debug "PresenceHandler: Presence away: $presenceSensor"
             state.presence = false
@@ -234,7 +279,6 @@ def presenceHandler(evt) {
     if (state.presence) {
         log.debug "PresenceHandler: Setting zone name back to the previous zone name (temporary until we check what Zone we should be in: $state.previousZoneNamePresence"
         setThermostat(state.previousZoneNamePresence,state.previousZoneTemperature)
-        state.lastTemp = getAverageTemperature()
         evaluateRoutine()
     } else {
         log.debug "PresenceHandler: Presence away"
@@ -254,6 +298,17 @@ def presenceHandler(evt) {
 // ********************************************************************************************************************
 def thermostatTemperatureHandler(evt) {
 	// Function used when temperature on virtual thermostat is changed
+    
+    if (state.boost) {
+		log.debug "ThermostatTemperatureHandler: Restoring zone name from 'Boosted' to previous name: $state.previousZoneNameBoost"
+		state.boost = false
+        
+        def thermostat = getThermostat()
+        thermostat.setZoneName(state.previousZoneNameBoost)
+	} else {
+    	log.debug "ThermostatTemperatureHandler: Not in 'boost' mode, nothing to reset"
+    }    
+    
     evaluateRoutine()
 	}
 // ********************************************************************************************************************
@@ -261,13 +316,19 @@ def thermostatModeHandler(evt) {
 	def mode = evt.value
 	log.debug "ThermostatModeHandler: Mode Changed to: $mode"
     
-    if (state.contact && state.presence) {
-		evaluateRoutine()
-	}
-	else {
-        log.debug "ThermostatModeHandler: Either Presence or Contact away/open"
-		heatingOff(mode == 'heat' ? false : true)
-	}
+    if (mode == "heat") {
+    	if (state.contact && (state.presence || (!state.presence && awaySetpoint != null))) {
+			log.debug "ThermostatModeHandler: Contact/Presence is True, performing evaluation"
+            evaluateRoutine()
+		}
+		else {
+        	log.debug "ThermostatModeHandler: Either Presence or Contact away/open, turning off heating"
+			heatingOff(mode == 'heat' ? false : true)
+		}
+	} else {
+       	log.debug "ThermostatModeHandler: Heating off"
+			heatingOff(mode == 'heat' ? false : true)
+    }
 }
 // ********************************************************************************************************************
 private evaluateRoutine() {
@@ -288,12 +349,13 @@ private evaluateRoutine() {
         log.debug "EvaluateRoutine: Current temperature is below desired temperature (with threshold)"
  
  		if(thermostat.currentValue('thermostatMode') == 'heat') {
-
+			log.debug " EvaluateRoutine: Heating is enabled"
+            
             if (state.contact && (state.presence || (!state.presence && awaySetpoint != null))) {
             	if (state.presence) {
                		log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed and someone is present - Turning on"
                 } else {
-                	log.debug "EvaluateRoutine: Heating is enabled - All contacts closed, no one present but away temp set - Turning on"
+                	log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed, no one present but away temp set - Turning on"
                 }
                 thermostat.setHeatingStatus(true)
             	outletsOn()
@@ -302,14 +364,14 @@ private evaluateRoutine() {
     	        heatingOff()  
             }
         } else {
-            log.debug " Evaluate: Heating is disabled - Not turning on"      
+            log.debug " EvaluateRoutine: Heating is disabled - Not turning on"      
             heatingOff()
         }
     } else if ((currentTemp - desiredTemp >= threshold)) {
-        log.debug "Evaluate: Current temperature is above desired temp (with threshold)"    
+        log.debug "EvaluateRoutine: Current temperature is above desired temp (with threshold)"    
         heatingOff()
     } else {
-    	log.debug "Evaluate: Current temperature matches desired temperature (within the threshold)"
+    	log.debug "EvaluateRoutine: Current temperature matches desired temperature (within the threshold)"
     }
     
     if(state.current == "on") {
@@ -329,10 +391,10 @@ def heatingOff(heatingOff) {
 		outletsOff()
         
 		if(thermostat.currentValue('thermostatMode') == 'heat') {
-			log.debug "HeatingOff: setHeatingOff to True"
+			log.debug "HeatingOff: setHeatingStatus to False"
             thermostat.setHeatingStatus(false)
 		} else {
-        	log.debug "HeatingOff: setHeatingStatus to False"
+        	log.debug "HeatingOff: setHeatingOff to True"
 			thermostat.setHeatingOff(true)
 		}
 	}
@@ -413,6 +475,8 @@ def setRequiredZone() {
 
 		// Reset the zone flags and update day because of day change. Covers midnight change
 		if (today != state.storedDay) {
+        		log.debug "setRequiredZone: The day has changed since the last zone change, reseting zone check flags"
+                
         	    state.zone1Set = false
                 state.zone2Set = false
                 state.zone3Set = false
@@ -421,7 +485,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-                
+       
                 state.storedDay = today
         }
         
@@ -445,7 +509,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone1Name,zone1Temperature)            
             }
 
@@ -462,7 +526,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone2Name,zone2Temperature)            
             }
 
@@ -479,7 +543,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone3Name,zone3Temperature)            
             }
 
@@ -496,7 +560,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone4Name,zone4Temperature)            
             }
 
@@ -512,7 +576,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone4Name,zone4Temperature)            
             }
             break
@@ -532,7 +596,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone1Name,zone1Temperature)            
             }
 
@@ -549,7 +613,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone2Name,zone2Temperature)            
             }
 
@@ -566,7 +630,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone3Name,zone3Temperature)            
             }
 
@@ -583,7 +647,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone4Name,zone4Temperature)            
             }
 
@@ -600,7 +664,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone4Name,zone4Temperature)            
             }
             break
@@ -620,7 +684,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone1WeekendName,zone1WeekendTemperature)            
             }
 
@@ -637,7 +701,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = true
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone2WeekendName,zone2WeekendTemperature)            
             }
 
@@ -654,7 +718,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = true
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone3WeekendName,zone3WeekendTemperature)            
             }
 
@@ -671,7 +735,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = true
-
+                state.boost = false
                 setThermostat(zone4WeekendName,zone4WeekendTemperature)            
             }
 
@@ -688,7 +752,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = true
-
+                state.boost = false
                 setThermostat(zone4WeekendName,zone4WeekendTemperature)            
             }
             break
@@ -708,7 +772,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone1WeekendName,zone1WeekendTemperature)            
             }
 
@@ -725,7 +789,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = true
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone2WeekendName,zone2WeekendTemperature)            
             }
 
@@ -742,7 +806,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = true
                 state.zone4WeekendSet = false
-
+                state.boost = false
                 setThermostat(zone3WeekendName,zone3WeekendTemperature)            
             }
 
@@ -759,7 +823,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = true
-
+                state.boost = false
                 setThermostat(zone4WeekendName,zone4WeekendTemperature)            
             }
 
@@ -776,7 +840,7 @@ def setRequiredZone() {
                 state.zone2WeekendSet = false
                 state.zone3WeekendSet = false
                 state.zone4WeekendSet = true
-
+                state.boost = false
                 setThermostat(zone4WeekendName,zone4WeekendTemperature)            
             }
             break
