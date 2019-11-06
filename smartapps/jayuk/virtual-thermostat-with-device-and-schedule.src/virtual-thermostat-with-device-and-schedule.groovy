@@ -21,18 +21,20 @@ preferences {
 	}
  	section("Only heat when a person is present (optional, leave blank to not require presence detection)...", hideWhenEmpty: true){
 		input "presences", "capability.presenceSensor", title: "Presence", required: false, multiple: true, hideWhenEmpty: true
+        input "presenceMinimumDuration", "number", title: "Minimum duration a presence stays active for (Mins: 0-30)", range: "0..30", defaultValue: 0, required: true, hideWhenEmpty: "presences"
         input "presenceAwaySetpoint", "decimal", title: "Away Temperature (1-40)", range: "1..40", required: false, hideWhenEmpty: "presences"
 	}
    	section("Only heat when a movement is detected (optional, leave blank to not require motion detection)...", hideWhenEmpty: true){
 		input "motions", "capability.motionSensor", title: "Motion", required: false, multiple: true, hideWhenEmpty: true
-        input "motionsDuration", "number", title: "Duration a motion stays active for (Mins: 1-30)", range: "1..30", required: false, hideWhenEmpty: "motions"
+        input "motionDuration", "number", title: "Duration a motion stays active for (Mins: 1-30)", range: "1..30", required: false, hideWhenEmpty: "motions"
         input "motionAwaySetpoint", "decimal", title: "Away Temp (1-40)", range: "1..40", required: false, hideWhenEmpty: "motions"
 	}
    	section("Never go below this temperature (even if heating is turned off): (optional)"){
 		input "emergencySetpoint", "decimal", title: "Emergency Temp (1-30)", range: "1..30", required: false
 	}
     section("Temperature Threshold (Don't allow heating to go above or below this amount from set temperature)") {
-		input "threshold", "decimal", "title": "Temperature Threshold (1-10)", range: "1..10", required: false, defaultValue: 1.0
+		input "aboveThreshold", "decimal", "title": "Above Temperature Threshold (0-10)", range: "0..10", required: true, defaultValue: 0.5
+        input "belowThreshold", "decimal", "title": "Below Temperature Threshold (0-10)", range: "0..10", required: true, defaultValue: 0.5
 	}
  	section("Monday to Friday Schedule") {
 		input "zone1", "time", title: "Zone 1 start time", required: true
@@ -66,6 +68,10 @@ preferences {
 		input "boostDuration", "number", title: "Boost duration (5 - 60 minutes)", range: "5..60", defaultValue: 60, required: true
 		input "boostTemperature", "decimal", title: "Amount to increase temperature by (1-10)", range: "1..10", defaultValue: 1, required: true
     }
+    section("Minimum on time") {
+		input "minOnTime", "number", title: "Minimum time the outlets stay on (0-10 minutes)", range: "0..10", defaultValue: 0, required: true
+    }
+
 }
 // ********************************************************************************************************************
 def installed()
@@ -81,10 +87,13 @@ def installed()
     state.previousZoneTemperaturePresence = null
 	state.todayTime = 0
 	state.yesterdayTime = 0
+    state.turnOnTime = 0
 	state.date = new Date().format("dd-MM-yy")
 	state.lastOn = 0
+    state.presenceTime = Math.round(new Date().getTime() / 1000)
     state.previousZoneNameBoost = null
     state.previousTemperatureBoost = null
+	state.presenceAwayScheduled = false
 
 	/* Flags to only allow the temperature to be set once by a zone change (to allow a user to manually override the temp until next Zone) */
 	state.zone1Set = false
@@ -140,10 +149,17 @@ def updated() {
 	if(state.yesterdayTime == null) state.yesterdayTime = 0
 	if(state.date == null) state.date = new Date().format("dd-MM-yy")
 	if(state.lastOn == null) state.lastOn = 0
-    
+ 
 	subscribe(sensors, "temperature", temperatureHandler)
-
-	if (contacts) {
+	subscribe(thermostat, "thermostatBoost", thermostatBoostHandler)
+	subscribe(thermostat, "thermostatSetpoint", thermostatTemperatureHandler)
+	subscribe(thermostat, "thermostatMode", thermostatModeHandler)
+	
+    thermostat.clearSensorData()
+	thermostat.setVirtualTemperature(getAverageTemperature())
+	thermostat.setTemperatureScale(parent.getTempScale())
+	
+    if (contacts) {
 		log.debug "Updated: Contact sensor(s) selected"
 		subscribe(contacts, "contact", contactHandler)
 	} else {
@@ -164,19 +180,12 @@ def updated() {
 		log.debug "Updated: No motion sensor selected"
 	}
 
-	subscribe(thermostat, "thermostatBoost", thermostatBoostHandler)
-	subscribe(thermostat, "thermostatSetpoint", thermostatTemperatureHandler)
-	subscribe(thermostat, "thermostatMode", thermostatModeHandler)
-	thermostat.clearSensorData()
-	thermostat.setVirtualTemperature(getAverageTemperature())
-	thermostat.setTemperatureScale(parent.getTempScale())
-	
     runEvery1Hour(updateTimings)
     initialize()
 }
 // ********************************************************************************************************************
 def initialize() {
- 	evaluateRoutine()
+	evaluateRoutine()
     runIn(60,initialize)
 }
 // ********************************************************************************************************************
@@ -196,7 +205,7 @@ def temperatureHandler(evt) {
 	def thermostat = getThermostat()
 	thermostat.setVirtualTemperature(getAverageTemperature())
 
-	if ((state.contact && state.presence) || emergencySetpoint) {
+	if (state.contact && (state.motion || (motionAwaySetpoint != null)) && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null)) || emergencySetpoint) {
 		evaluateRoutine()
 	} else {
 		heatingOff()
@@ -286,17 +295,12 @@ def presenceHandler(evt) {
     
     // Lets loop through all the presence sensors and check their status
     for(presenceSensor in presences) {
-        
         if (presenceSensor.currentPresence == "present") {
             log.debug "PresenceHandler: Presence detected, sensor: $presenceSensor"
             presenceHere = true
         } 
     }
-
-	if (presenceHere == false) {
-		log.debug "PresenceHandler: Presence detected: &presenceHere"
-    }
-    
+  
     if (state.presence == false && presenceHere) {
         
         if (presenceAwaySetpoint != null) {
@@ -307,24 +311,59 @@ def presenceHandler(evt) {
         	thermostat.setZoneName(state.previousZoneNamePresence)
         }
         state.presence = true
+        state.presenceTime = Math.round(new Date().getTime() / 1000)
+        unschedule(presenceAway)
         evaluateRoutine()
     } else if (state.presence == false && presenceHere == false) {
     	log.debug "PresenceHandler: Already in away mode and all presence sensors are set as away - Doing nothing"
     } else if(state.presence && presenceHere == false) {
-        log.debug "PresenceHandler: First occurance of all presence sensor(s) being set as away"
-        state.previousZoneNamePresence = thermostat.currentValue("zoneName")
-        state.previousZoneTemperaturePresence = thermostat.currentValue("thermostatSetpoint")
-        state.presence = false
+    	log.debug "PresenceHandler: First occurance of all presence sensors being away, so scheduling/rescheduling presenceAway to run"
+    	              
+        state.previousZoneNamePresence = thermostat.currentValue("zoneName")  
+    	state.previousZoneTemperaturePresence = thermostat.currentValue("thermostatSetpoint")
         
-        if (presenceAwaySetpoint != null) {
-        	log.debug "PresenceHandler: presenceAwaySetpoint: $presenceAwaySetpoint - Adjusting thermostat and leaving heating enabled"
-			setThermostat("Presence: Away",presenceAwaySetpoint)
-            evaluateRoutine()
-		} else {
-        	log.debug "PresenceHandler: No away temperature defined - Turning off heating"
-        	thermostat.setZoneName("Presence: Away")
-            heatingOff()
+        if (presenceMinimumDuration > 0) {
+        	def presenceMinimumDurationSeconds = presenceMinimumDuration * 60
+        
+            def time = Math.round(new Date().getTime() / 1000)
+            def presenceDuration = time - state.presenceTime
+
+            if (presenceDuration < presenceMinimumDurationSeconds) {
+            
+                log.debug "PresenceHandler: Presence duration is below specified minimum - Duration: $presenceDuration Minimum: $presenceMinimumDurationSeconds"
+                
+                def presenceExtraDurationSeconds = presenceMinimumDurationSeconds-presenceDuration
+                def presenceAwayTime = new Date(now() + (presenceExtraDurationSeconds*1000))
+
+				thermostat.setZoneName("Presence: Away at ${presenceAwayTime.format('HH:mm')}")
+                
+                if (presenceExtraDurationSeconds > 60) {
+                    log.debug "PresenceHandler: Presence duration is below specified minimum, scheduling for minimum period - Scheduling to run in: $presenceExtraDurationSeconds seconds"
+                    state.presenceAwayScheduled = true
+                    runIn(presenceExtraDurationSeconds, presenceAway)
+                } else {
+                    log.debug "PresenceHandler: Remaining minimum duration is less than 60 seconds, scheduling presenceAway to run in 60 seconds"
+                    state.presenceAwayScheduled = true
+                    runIn(60, presenceAway)
+                }
+            } else {
+				log.debug "PresenceHandler: Presence duration has exceeded minimum specified value, running presenceAway now"
+        		presenceAway()
+            }
+    	} else {
+        	log.debug "PresenceHandler: No minimum duration specified, running presenceAway now"
+        	presenceAway()
         }
+	} else if (state.presenceAwayScheduled & presenceHere) {
+    	
+        state.presenceAwayScheduled = false
+        state.presenceTime = Math.round(new Date().getTime() / 1000)
+        unschedule(presenceAway)
+
+        log.debug "PresenceHandler: We have detected a presence while pending, setting just the zone name back to previous value (temporary until we check what Zone we should be in"
+        thermostat.setZoneName(state.previousZoneNamePresence)
+
+        evaluateRoutine()
     }
 }
 // ********************************************************************************************************************
@@ -381,6 +420,25 @@ def motionOff() {
         }
 }
 // ********************************************************************************************************************
+def presenceAway() {
+	
+    log.debug "PresenceAway: Executing"
+          
+    state.presence = false
+    state.presenceTime = 0
+    state.presenceAwayScheduled = false
+    
+     if (presenceAwaySetpoint != null) {
+        	log.debug "PresenceAway: presenceAwaySetpoint: $presenceAwaySetpoint - Adjusting thermostat accordingly and leaving heating enabled"
+			setThermostat("Presence: Away",presenceAwaySetpoint)
+            evaluateRoutine()
+		} else {
+        	log.debug "PresenceAway: No away temp set, turning off heating"
+        	thermostat.setZoneName("Presence: Away")
+            heatingOff()
+        }
+}
+// ********************************************************************************************************************
 def thermostatTemperatureHandler(evt) {
 	// Function used when temperature on virtual thermostat is changed
     
@@ -389,7 +447,8 @@ def thermostatTemperatureHandler(evt) {
 		state.boost = false
         unschedule (boostOff)
         
-        def thermostat = getThermostat()
+	    def thermostat = getThermostat()
+        
         thermostat.setZoneName(state.previousZoneNameBoost)
 	} else {
     	log.debug "ThermostatTemperatureHandler: Not in 'boost' mode, nothing to reset"
@@ -431,19 +490,19 @@ private evaluateRoutine() {
     	log.debug "EvaluateRountine: In Emergency Mode, turning on"
         thermostat.setEmergencyMode(true)
         outletsOn()
-    } else if ((desiredTemp - currentTemp >= threshold)) {
+    } else if ((desiredTemp - currentTemp) >= belowThreshold) {
         log.debug "EvaluateRoutine: Current temperature is below desired temperature (with threshold)"
  
  		if(thermostat.currentValue('thermostatMode') == 'heat') {
 			log.debug " EvaluateRoutine: Heating is enabled"
             
             if (state.contact && (state.motion || (motionAwaySetpoint != null)) && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null))) {
-            	if (state.presence) {
+            	if (state.presence && presences) {
                		log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed and someone is present - Turning on"
                 } else {
                 	log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed, no one present but presence away temp set - Turning on"
                 }
-                if (state.motion) {
+                if (state.motion && motions) {
                		log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed and someone is moving - Turning on"
                 } else {
                 	log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed, no one is moving but motion away temp set - Turning on"
@@ -458,11 +517,11 @@ private evaluateRoutine() {
             log.debug " EvaluateRoutine: Heating is disabled - Turning off"      
             heatingOff()
         }
-    } else if ((currentTemp - desiredTemp >= threshold)) {
+    } else if ((currentTemp - desiredTemp) >= aboveThreshold) {
         log.debug "EvaluateRoutine: Current temperature is above desired temp (with threshold) - Turning off"    
         heatingOff()
     } else {
-    	log.debug "EvaluateRoutine: Current temperature matches desired temperature (within the threshold) - Doing nothing"
+    	log.debug "EvaluateRoutine: Current temperature matches desired temperature (within the thresholds) - Doing nothing"
     }
     
     if(state.current == "on") {
@@ -473,21 +532,31 @@ private evaluateRoutine() {
 def heatingOff(heatingOff) {
 	def thisTemp = getAverageTemperature()
     
+    def time = Math.round(new Date().getTime() / 1000)
+    def onFor = time - state.turnOnTime
+    def minOnTimeSeconds = minOnTime * 60
+    
+    log.debug "HeatingOff: state.turnOnTime: $state.turnOnTime  time: $time   difference: $onFor     minOnTime: $minOnTimeSeconds"
+    
 	if (thisTemp <= emergencySetpoint) {
 		log.debug "HeatingOff: In Emergency Mode, not turning off"
 		outletsOn()
 		thermostat.setEmergencyMode(true)
 	} else {
-		log.debug "HeatingOff: Heating off"
-		outletsOff()
-        
-		if(thermostat.currentValue('thermostatMode') == 'heat') {
-			log.debug "HeatingOff: setHeatingStatus to False"
-            thermostat.setHeatingStatus(false)
+    	if (onFor >= minOnTimeSeconds) {
+            if (thermostat.currentValue('thermostatMode') == 'heat') {
+            	log.debug "HeatingOff: Time on is greater than specified minimum on period - turning off"
+                thermostat.setHeatingStatus(false)
+            } else {
+            	log.debug "HeatingOff: setHeatingOff to True - Thermostat has been turned off"
+                thermostat.setHeatingOff(true)
+            }
+            
+            outletsOff()
+            
 		} else {
-        	log.debug "HeatingOff: setHeatingOff to True"
-			thermostat.setHeatingOff(true)
-		}
+        	log.debug "HeatingOff: Time on is less than than specified minimum on period - doing nothing"
+        }
 	}
 }
 // ********************************************************************************************************************
@@ -530,6 +599,7 @@ def outletsOn() {
 	
 	state.lastOn = Math.round(new Date().getTime() / 1000)
 	state.current = "on"
+    state.turnOnTime = Math.round(new Date().getTime() / 1000)
 	thermostat.setTimings(state.todayTime, state.yesterdayTime)
 }
 // ********************************************************************************************************************
@@ -549,7 +619,8 @@ def outletsOff() {
 	}
 	
 	state.current = "off"
-	state.lastOn = 0;
+    state.turnOnTime = 0
+	state.lastOn = 0
 	thermostat.setTimings(state.todayTime, state.yesterdayTime)
 }
 // ********************************************************************************************************************
@@ -557,7 +628,7 @@ def setRequiredZone() {
     
     /* Only preform the main body of this procedure if we aren't away or a window/door is open.
     Irrespective of the above, we will still reschedule this process to run in 60 seconds */ 
-    if (state.contact && state.presence && state.motion) {
+    if (state.contact && (state.motion || (motionAwaySetpoint != null)) && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null)) || emergencySetpoint) {
         def calendar = Calendar.getInstance()
         calendar.setTimeZone(location.timeZone)
         def today = calendar.get(Calendar.DAY_OF_WEEK)
