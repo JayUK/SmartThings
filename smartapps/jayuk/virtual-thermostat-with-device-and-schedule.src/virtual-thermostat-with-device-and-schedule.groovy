@@ -7,6 +7,10 @@ definition(
 	iconUrl: "https://raw.githubusercontent.com/JayUK/SmartThings-VirtualThermostat/master/images/logo-small.png",
 	iconX2Url: "https://raw.githubusercontent.com/JayUK/SmartThings-VirtualThermostat/master/images/logo.png",
 	parent: "JayUK:Virtual Thermostat Manager",
+    // 
+    //	Changed the 1 minute EvaluateRoutine not to poll the temperature sensor, in the hope of saving it's battery
+    //	Instead, rely on the temperature sensor to trigger an event and update a value when it detects a temperature
+    //  change.
 )
 // ********************************************************************************************************************
 preferences {
@@ -89,11 +93,14 @@ def installed()
 	
     // variables used to store the current zone name/temp before entering the mode
     state.previousZoneNamePresence = null
-    state.previousZoneNameContact = null
     state.previousZoneTemperaturePresence = null
+    state.previousZoneNameMotion = null
+    state.previousZoneTemperatureMotion = null
     state.previousZoneNameBoost = null
     state.previousTemperatureBoost = null
-	state.presenceAwayScheduled = false
+	state.previousZoneNameContact = null
+    
+    state.presenceAwayScheduled = false
 
 	// variables used to calculate todays and yesterdays on time
 	state.todayTime = 0
@@ -171,6 +178,15 @@ def updated() {
 	if(state.date == null) state.date = new Date().format("dd-MM-yy")
 	if(state.lastOn == null) state.lastOn = 0
  
+ 	state.zone1Set = false
+    state.zone2Set = false
+    state.zone3Set = false
+    state.zone4Set = false
+    state.zone1WeekendSet = false
+    state.zone2WeekendSet = false
+    state.zone3WeekendSet = false
+    state.zone4WeekendSet = false
+    
  	// Subscribe to the temperature sensor objects (specifically the temperature attribute) and run the handler each time the temperature changes
 	subscribe(sensors, "temperature", temperatureHandler)
     
@@ -186,8 +202,11 @@ def updated() {
     // Clear the temperature sensor(s) data
     thermostat.clearSensorData()
     
+    // Get the current temp from the averaged values from the temperature sensors
+    state.currentTemp = getAverageTemperature()
+    
     // Set the Virtual Thermostat temperature to the average temperature reported by the temperature sensors
-	thermostat.setVirtualTemperature(getAverageTemperature())
+	thermostat.setVirtualTemperature(state.currentTemp)
     
     // Set the temp scale to C or F
 	thermostat.setTemperatureScale(parent.getTempScale())
@@ -250,10 +269,14 @@ def getAverageTemperature() {
 // Handler for when the temperature sensor data changes
 def temperatureHandler(evt) {
 	def thermostat = getThermostat()
-	thermostat.setVirtualTemperature(getAverageTemperature())
+    
+    // Get the current temp from the averaged values from the temperature sensors
+    state.currentTemp = getAverageTemperature()
+    
+	thermostat.setVirtualTemperature(state.currentTemp)
 
 	// Only perform an evaluation if someone is presence/moving/doors closed, or emergency temp is set, or an away temp is set
-	if (state.contact && (state.motion || (motionAwaySetpoint != null)) && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null)) || emergencySetpoint) {
+	if ((state.contact && (state.motion || motionAwaySetpoint != null) && (state.presence || presenceAwaySetpoint != null)) || emergencySetpoint != null) {
 		evaluateRoutine()
 	} else {
     	// Otherwise turn the heating off
@@ -538,7 +561,6 @@ def presenceAway() {
 // Function used when temperature on virtual thermostat is changed
 def thermostatTemperatureHandler(evt) {
 	
-    
     if (state.boost) {
     	// We are in boost mode, if someone manual adjusts the temperature while in this mode then we'll exit it
 		log.debug "ThermostatTemperatureHandler: Restoring zone name from 'Boosted' to previous name: $state.previousZoneNameBoost"
@@ -567,7 +589,7 @@ def thermostatModeHandler(evt) {
     if (mode == "heat") {
     	// If the thermostat is in heat mode
         
-        if (state.contact && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null))) {
+        if (state.contact && (state.presence || presenceAwaySetpoint != null) && (state.motion || motionAwaySetpoint != null)) {
 			// If all contacts are closed and we have presence (or an away temp is set) and we have motion (or an away temp is set)
         	log.debug "ThermostatModeHandler: Contact/Presence is True, performing evaluation"
             evaluateRoutine()
@@ -590,31 +612,28 @@ private evaluateRoutine() {
 	
 	// Make sure we have the right zone name and temp based on the correct day and time
 	setRequiredZone()
-    
-    // Get the current temp from the averaged values from the temperature sensors
-    def currentTemp = getAverageTemperature()
-    
+       
     // Get the desired temp from the virtual thermostat
     def desiredTemp = thermostat.currentValue("thermostatSetpoint")
 	
     // Get the current mode from the virtual thermostat
     def heatingMode = thermostat.currentValue('thermostatMode')
     
-	log.debug "EvaluateRoutine: Current: $currentTemp, Desired: $desiredTemp, Heating mode: $heatingMode"
+	log.debug "EvaluateRoutine: Current: $state.currentTemp, Desired: $desiredTemp, Heating mode: $heatingMode"
 	       
-    if (currentTemp <= emergencySetpoint) {
+    if (state.currentTemp <= emergencySetpoint) {
     	// The current temp is below the specified emergency temperature, turning on heating (even if the thermostat is turned off)
     	log.debug "EvaluateRountine: In Emergency Mode, turning on"
         thermostat.setEmergencyMode(true)
         outletsOn()
-    } else if ((desiredTemp - currentTemp) >= belowThreshold) {
+    } else if ((desiredTemp - state.currentTemp) >= belowThreshold) {
     	// Current temperature is below the desired temperature with the specified threshold
         log.debug "EvaluateRoutine: Current temperature is below desired temperature (with threshold)"
  
  		if(thermostat.currentValue('thermostatMode') == 'heat') {
 			log.debug " EvaluateRoutine: Heating is enabled"
             
-            if (state.contact && (state.motion || (motionAwaySetpoint != null)) && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null))) {
+            if (state.contact && (state.motion || motionAwaySetpoint != null) && (state.presence || presenceAwaySetpoint != null)) {
             	// All contacts are closed and we have motion (or an away temperature is set) and we have presence (or an away temperature is set)
                 if (state.presence && presences) {
                		log.debug "EvaluateRoutine: Heating is enabled - All contacts are closed and someone is present - Turning on"
@@ -637,7 +656,7 @@ private evaluateRoutine() {
             log.debug " EvaluateRoutine: Heating is disabled - Turning off"      
             heatingOff()
         }
-    } else if ((currentTemp - desiredTemp) >= aboveThreshold) {
+    } else if ((state.currentTemp - desiredTemp) >= aboveThreshold) {
     	// Current temperature is above the specified temperaure with threshold, turning off heating
         log.debug "EvaluateRoutine: Current temperature is above desired temp (with threshold) - Turning off"    
         heatingOff()
@@ -653,9 +672,7 @@ private evaluateRoutine() {
 // ********************************************************************************************************************
 // Turn the heating off
 def heatingOff(heatingOff) {
-	
-	def thisTemp = getAverageTemperature()
-    
+	  
     // Get the current time (Unix time) i seconds
     def time = Math.round(new Date().getTime() / 1000)
     
@@ -667,7 +684,7 @@ def heatingOff(heatingOff) {
     
     log.debug "HeatingOff: state.turnOnTime: $state.turnOnTime  time: $time   difference: $onFor     minOnTime: $minOnTimeSeconds"
     
-	if (thisTemp <= emergencySetpoint) {
+	if (state.currentTemp <= emergencySetpoint) {
     	// Current temp is below the specified emergency temperature, turning on the heating
 		log.debug "HeatingOff: In Emergency Mode, not turning off"
 		outletsOn()
@@ -778,23 +795,74 @@ def outletsOff() {
 // We will only perform the update once per zone change, this will prevent any user specified temperature being reset
 // each time this routine is called (per minute)
 def setRequiredZone() {
-    
-    // Only preform the main body of this procedure if we aren't away or a window/door is open.
-    // Irrespective of the above, we will still reschedule this process to run in 60 seconds
-    if (state.contact && (state.motion || (motionAwaySetpoint != null)) && (state.presence || (presenceAwaySetpoint != null)) && (state.motion || (motionAwaySetpoint != null)) || emergencySetpoint) {
-        def calendar = Calendar.getInstance()
-        calendar.setTimeZone(location.timeZone)
-        
-        def today = calendar.get(Calendar.DAY_OF_WEEK)
-        def timeNow = now()
-        def midnightToday = timeToday("2000-01-01T23:59:59.999-0000", location.timeZone)
+       
+    def calendar = Calendar.getInstance()
+    calendar.setTimeZone(location.timeZone)
 
-		if (today != state.storedDay) {
-			// Reset the zone flags and update the day because of midnight change
-            
-            log.debug "setRequiredZone: The day has changed since the last zone change, reseting zone check flags"
+    def today = calendar.get(Calendar.DAY_OF_WEEK)
+    def timeNow = now()
+    def midnightToday = timeToday("2000-01-01T23:59:59.999-0000", location.timeZone)
 
+    if (today != state.storedDay) {
+        // Reset the zone flags and update the day because of midnight change
+
+        log.debug "setRequiredZone: The day has changed since the last zone change, reseting zone check flags"
+
+        state.zone1Set = false
+        state.zone2Set = false
+        state.zone3Set = false
+        state.zone4Set = false
+        state.zone1WeekendSet = false
+        state.zone2WeekendSet = false
+        state.zone3WeekendSet = false
+        state.zone4WeekendSet = false
+
+        state.storedDay = today
+    }
+
+    // This section is where the time/temperature schedule is set
+    switch (today) {
+        // Only Monday
+        case Calendar.MONDAY:
+
+        if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1, location.timeZone).time && !state.zone4WeekendSet) { 
+            // Are we between midnight Sunday and 1st zone Monday, we're still in Sunday zone 4             
+
+            log.debug "SetRequiredZone: Sunday - Zone 4 (after midnight)"
             state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = true
+
+            state.boost = false
+            unschedule(boostOff)
+            
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4WeekendName
+            state.previousTemperatureBoost = zone4WeekendTemperature
+            state.previousZoneNamePresence = zone4WeekendName
+            state.previousZoneTemperaturePresence = zone4WeekendTemperature
+            state.previousZoneNameMotion = zone4WeekendName
+            state.previousZoneTemperatureMotion = zone4WeekendTemperature
+            state.previousZoneNameContact = zone4WeekendName
+
+            if ((state.contact && state.motion && state.presence) || emergencySetpoint !=null) {
+                setThermostat(zone4WeekendName,zone4WeekendTemperature)     
+            }
+       } 
+
+        else if (timeNow >= timeToday(zone1, location.timeZone).time && timeNow < timeToday(zone2, location.timeZone).time && !state.zone1Set) { 
+            // Are we between 1st zone and 2nd zone                
+
+            log.debug "SetRequiredZone: Mon - Zone 1"
+
+            // Set the flag to specify what zone we are
+            state.zone1Set = true
             state.zone2Set = false
             state.zone3Set = false
             state.zone4Set = false
@@ -803,493 +871,767 @@ def setRequiredZone() {
             state.zone3WeekendSet = false
             state.zone4WeekendSet = false
 
-            state.storedDay = today
+            // Disable any boost mode
+            state.boost = false
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone1Name
+            state.previousTemperatureBoost = zone1Temperature
+            state.previousZoneNamePresence = zone1Name
+            state.previousZoneTemperaturePresence = zone1Temperature
+            state.previousZoneNameMotion = zone1Name
+            state.previousZoneTemperatureMotion = zone1Temperature
+            state.previousZoneNameContact = zone1Name
+
+            unschedule(boostOff)
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone1Name,zone1Temperature)     
+            }
+        } 
+
+        else if (timeNow >= timeToday(zone2, location.timeZone).time && timeNow < timeToday(zone3, location.timeZone).time && !state.zone2Set) { 
+            // Are we between 2nd zone and 3rd zone
+
+            log.debug "SetRequiredZone: Mon - Zone 2"
+
+            state.zone1Set = false
+            state.zone2Set = true
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            
+            state.boost = false
+            unschedule(boostOff)
+            
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone2Name
+            state.previousTemperatureBoost = zone2Temperature
+            state.previousZoneNamePresence = zone2Name
+            state.previousZoneTemperaturePresence = zone2Temperature
+            state.previousZoneNameMotion = zone2Name
+            state.previousZoneTemperatureMotion = zone2Temperature
+            state.previousZoneNameContact = zone2Name
+            
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone2Name,zone2Temperature)     
+            }
         }
 
-		// This section is where the time/temperature schedule is set
-        switch (today) {
-        	// Only Monday
-        	case Calendar.MONDAY:
+        else if (timeNow >= timeToday(zone3, location.timeZone).time && timeNow < timeToday(zone4, location.timeZone).time && !state.zone3Set) { 
+            // Are we between 3rd zone and 4th zone    
+
+            log.debug "SetRequiredZone: Mon - Zone 3"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = true
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
             
-                if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1, location.timeZone).time && !state.zone4WeekendSet) { 
-                    // Are we between midnight Sunday and 1st zone Monday, we're still in Sunday zone 4             
-
-                    log.debug "SetRequiredZone: Sunday - Zone 4 (after midnight)"
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = true
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4WeekendName,zone4WeekendTemperature)            
-                } 
-
-                else if (timeNow >= timeToday(zone1, location.timeZone).time && timeNow < timeToday(zone2, location.timeZone).time && !state.zone1Set) { 
-                    // Are we between 1st zone and 2nd zone                
-
-                    log.debug "SetRequiredZone: Mon - Zone 1"
-
-                    // Set the flag to specify what zone we are
-                    state.zone1Set = true
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-
-                    // Disable any boost mode
-                    state.boost = false
-                    unschedule(boostOff)
-
-                    // Update the virtual thermostat with the required zone name and temperature
-                    setThermostat(zone1Name,zone1Temperature)            
-                } 
-
-                else if (timeNow >= timeToday(zone2, location.timeZone).time && timeNow < timeToday(zone3, location.timeZone).time && !state.zone2Set) { 
-                    // Are we between 2nd zone and 3rd zone
-
-                    log.debug "SetRequiredZone: Mon - Zone 2"
-
-                    state.zone1Set = false
-                    state.zone2Set = true
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone2Name,zone2Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone3, location.timeZone).time && timeNow < timeToday(zone4, location.timeZone).time && !state.zone3Set) { 
-                    // Are we between 3rd zone and 4th zone    
-
-                    log.debug "SetRequiredZone: Mon - Zone 3"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = true
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone3Name,zone3Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone4, location.timeZone).time && timeNow < midnightToday.time && !state.zone4Set) { 
-                    // Are we between 4th zone and midnight, we're in zone 4    
-
-                    log.debug "SetRequiredZone: Mon - Zone 4 (upto midnight)"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = true
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4Name,zone4Temperature)            
-                }
-
-                break
-
-            case Calendar.TUESDAY:
-            case Calendar.WEDNESDAY:
-            case Calendar.THURSDAY:
-
-                if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1, location.timeZone).time && !state.zone4Set) { 
-                    // Are we between midnight yesterday and 1st zone, we're still in zone 4 from perevious day            
-
-                    log.debug "SetRequiredZone: Tue-Thu - Zone 4 (after midnight)"
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = true
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4Name,zone4Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone1, location.timeZone).time && timeNow < timeToday(zone2, location.timeZone).time && !state.zone1Set) { 
-                    // Are we between 1st zone and 2nd zone                
-
-                    log.debug "SetRequiredZone: Tue-Thu - Zone 1"
-
-                    // Set the flag to specify what zone we are
-                    state.zone1Set = true
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-
-                    // Disable any boost mode
-                    state.boost = false
-                    unschedule(boostOff)
-
-                    // Update the virtual thermostat with the required zone name and temperature
-                    setThermostat(zone1Name,zone1Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone2, location.timeZone).time && timeNow < timeToday(zone3, location.timeZone).time && !state.zone2Set) { 
-                    // Are we between 2nd zone and 3rd zone
-
-                    log.debug "SetRequiredZone: Tue-Thu - Zone 2"
-
-                    state.zone1Set = false
-                    state.zone2Set = true
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone2Name,zone2Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone3, location.timeZone).time && timeNow < timeToday(zone4, location.timeZone).time && !state.zone3Set) { 
-                    // Are we between 3rd zone and 4th zone    
-
-                    log.debug "SetRequiredZone: Tue-Thu - Zone 3"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = true
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone3Name,zone3Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone4, location.timeZone).time && timeNow < midnightToday.time && !state.zone4Set) { 
-                    // Are we between 4th zone and midnight, we're in zone 4    
-
-                    log.debug "SetRequiredZone: Tue-Thu - Zone 4 (upto midnight)"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = true
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4Name,zone4Temperature)            
-                }
-
-                break
-
-            case Calendar.FRIDAY:
-
-                if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1Weekend, location.timeZone).time && !state.zone4Set) { 
-                    // Are we between midnight Thursday and 1st zone on Friday, we schedule Thursday zone 4                
-
-                    log.debug "SetRequiredZone: Thursday - Zone 4 (after midnight)"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = true
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4Name,zone4Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone1, location.timeZone).time && timeNow < timeToday(zone2, location.timeZone).time && !state.zone1Set) { 
-                    // Are we between 1st zone and 2nd zone    
-
-                    log.debug "SetRequiredZone: Friday - Zone 1"
-
-                    state.zone1Set = true
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone1Name,zone1Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone2, location.timeZone).time && timeNow < timeToday(zone3, location.timeZone).time && !state.zone2Set) { 
-                    // Are we between 2nd zone and 3rd zone                
-
-                    log.debug "SetRequiredZone: Friday - Zone 2"
-
-                    state.zone1Set = false
-                    state.zone2Set = true
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone2Name,zone2Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone3, location.timeZone).time && timeNow < timeToday(zone4, location.timeZone).time && !state.zone3Set) { 
-                    // Are we between 3rd zone and 4th zone                
-
-                    log.debug "SetRequiredZone: Friday - Zone 3"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = true
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone3Name,zone3Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone4, location.timeZone).time && timeNow < midnightToday.time && !state.zone4Set) { 
-                    // Are we between 4th zone Friday and midnight, we schedule Friday zone 4
-
-                    log.debug "SetRequiredZone: Friday - Zone 4 (upto midnight)"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = true
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4Name,zone4Temperature)            
-                }
-
-                break
-
-            case Calendar.SATURDAY:
-
-                if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1Weekend, location.timeZone).time && !state.zone4Set) { 
-                    // Are we between midnight Friday and 1st zone Saturday, we're still in zone 4 from Friday
-
-                    log.debug "SetRequiredZone: Friday - Zone 4 (after midnight)"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = true
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4Name,zone4Temperature)            
-                }
-
-                else if (timeNow >= timeToday(zone1Weekend, location.timeZone).time && timeNow < timeToday(zone2Weekend, location.timeZone).time && !state.zone1WeekendSet) { 
-                    // Are we between 1st zone and 2nd zone   
-
-                    log.debug "SetRequiredZone: Saturday - Zone 1"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = true
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone1WeekendName,zone1WeekendTemperature)            
-                }
-
-                else if (timeNow >= timeToday(zone2Weekend, location.timeZone).time && timeNow < timeToday(zone3Weekend, location.timeZone).time && !state.zone2WeekendSet) { 
-                    // Are we between 2nd zone and 3rd zone               
-
-                    log.debug "SetRequiredZone: Saturday - Zone 2"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = true
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone2WeekendName,zone2WeekendTemperature)            
-                }
-
-                else if (timeNow >= timeToday(zone3Weekend, location.timeZone).time && timeNow < timeToday(zone4Weekend, location.timeZone).time && !state.zone3WeekendSet) { 
-                    // Are we between 3rd zone and 4th zone                
-
-                    log.debug "SetRequiredZone: Saturday - Zone 3"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = true
-                    state.zone4WeekendSet = false
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone3WeekendName,zone3WeekendTemperature)            
-                }
-
-                else if (timeNow >= timeToday(zone4Weekend, location.timeZone).time && timeNow < midnightToday.time && !state.zone4WeekendSet) { 
-                    // Are we between 4th zone and midnight, schedule zone 4                
-
-                    log.debug "SetRequiredZone: Saturday - Zone 4 (upto midnight)"
-
-                    state.zone1Set = false
-                    state.zone2Set = false
-                    state.zone3Set = false
-                    state.zone4Set = false
-                    state.zone1WeekendSet = false
-                    state.zone2WeekendSet = false
-                    state.zone3WeekendSet = false
-                    state.zone4WeekendSet = true
-                    state.boost = false
-                    unschedule(boostOff)
-                    setThermostat(zone4WeekendName,zone4WeekendTemperature)            
-                }
-
-                break
-
-            case Calendar.SUNDAY:
-
-            if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1, location.timeZone).time && !state.zone4WeekendSet) { 
-				// Are we between midnight Saturday and 1st zone on Sunday, schedule Saturday Zone 4                
-                
-                log.debug "SetRequiredZone: Saturday - Zone 4 (after midnight)"
-                
-                state.zone1Set = false
-                state.zone2Set = false
-                state.zone3Set = false
-                state.zone4Set = false
-                state.zone1WeekendSet = false
-                state.zone2WeekendSet = false
-                state.zone3WeekendSet = false
-                state.zone4WeekendSet = true
-                state.boost = false
-                unschedule(boostOff)
-                setThermostat(zone4WeekendName,zone4WeekendTemperature)            
-            }
-
-            if (timeNow >= timeToday(zone1Weekend, location.timeZone).time && timeNow < timeToday(zone2Weekend, location.timeZone).time && !state.zone1WeekendSet) { 
-            	// Are we between 1st zone and 2nd zone                
-                
-                log.debug "SetRequiredZone: Sunday - Zone 1"
-                
-                state.zone1Set = false
-                state.zone2Set = false
-                state.zone3Set = false
-                state.zone4Set = false
-                state.zone1WeekendSet = true
-                state.zone2WeekendSet = false
-                state.zone3WeekendSet = false
-                state.zone4WeekendSet = false
-                state.boost = false
-                unschedule(boostOff)
-                setThermostat(zone1WeekendName,zone1WeekendTemperature)            
-            }
-
-            else if (timeNow >= timeToday(zone2Weekend, location.timeZone).time && timeNow < timeToday(zone3Weekend, location.timeZone).time && !state.zone2WeekendSet) { 
-				// Are we between 2nd zone and 3rd zone                
-                
-                log.debug "SetRequiredZone: Sunday - Zone 2"
-                
-                state.zone1Set = false
-                state.zone2Set = false
-                state.zone3Set = false
-                state.zone4Set = false
-                state.zone1WeekendSet = false
-                state.zone2WeekendSet = true
-                state.zone3WeekendSet = false
-                state.zone4WeekendSet = false
-                state.boost = false
-                unschedule(boostOff)
-                setThermostat(zone2WeekendName,zone2WeekendTemperature)            
-            }
-
-            else if (timeNow >= timeToday(zone3Weekend, location.timeZone).time && timeNow < timeToday(zone4Weekend, location.timeZone).time && !state.zone3WeekendSet) { 
-				// Are we between 3rd zone and 4th zone               
-                
-                log.debug "SetRequiredZone: Sunday - Zone 3"
-                
-                state.zone1Set = false
-                state.zone2Set = false
-                state.zone3Set = false
-                state.zone4Set = false
-                state.zone1WeekendSet = false
-                state.zone2WeekendSet = false
-                state.zone3WeekendSet = true
-                state.zone4WeekendSet = false
-                state.boost = false
-                unschedule(boostOff)
-                setThermostat(zone3WeekendName,zone3WeekendTemperature)            
-            }
-
-            else if (timeNow >= timeToday(zone4Weekend, location.timeZone).time && timeNow < midnightToday.time && !state.zone4WeekendSet) { 
-				// Are we between 4th time Sunday and midnight, schedule Sunday zone 4                
-                
-                log.debug "SetRequiredZone: Sunday - Zone 4 (upto midnight)"
-                
-                state.zone1Set = false
-                state.zone2Set = false
-                state.zone3Set = false
-                state.zone4Set = false
-                state.zone1WeekendSet = false
-                state.zone2WeekendSet = false
-                state.zone3WeekendSet = false
-                state.zone4WeekendSet = true
-                state.boost = false
-                unschedule(boostOff)
-                setThermostat(zone4WeekendName,zone4WeekendTemperature)            
-            }
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone3Name
+            state.previousTemperatureBoost = zone3Temperature
+            state.previousZoneNamePresence = zone3Name
+            state.previousZoneTemperaturePresence = zone3Temperature
+            state.previousZoneNameMotion = zone3Name
+            state.previousZoneTemperatureMotion = zone3Temperature
+            state.previousZoneNameContact = zone3Name
+
+			state.boost = false
+            unschedule(boostOff)
             
-            break
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone3Name,zone3Temperature)     
+            }
         }
+
+        else if (timeNow >= timeToday(zone4, location.timeZone).time && timeNow < midnightToday.time && !state.zone4Set) { 
+            // Are we between 4th zone and midnight, we're in zone 4    
+
+            log.debug "SetRequiredZone: Mon - Zone 4 (upto midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = true
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4Name
+            state.previousTemperatureBoost = zone4Temperature
+            state.previousZoneNamePresence = zone4Name
+            state.previousZoneTemperaturePresence = zone4Temperature
+            state.previousZoneNameMotion = zone4Name
+            state.previousZoneTemperatureMotion = zone4Temperature
+            state.previousZoneNameContact = zone4Name
+
+            unschedule(boostOff)
+            
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4Name,zone4Temperature)     
+            }
+        }
+
+        break
+
+        case Calendar.TUESDAY:
+        case Calendar.WEDNESDAY:
+        case Calendar.THURSDAY:
+
+        if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1, location.timeZone).time && !state.zone4Set) { 
+            // Are we between midnight yesterday and 1st zone, we're still in zone 4 from perevious day            
+
+            log.debug "SetRequiredZone: Tue-Thu - Zone 4 (after midnight)"
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = true
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4Name
+            state.previousTemperatureBoost = zone4Temperature
+            state.previousZoneNamePresence = zone4Name
+            state.previousZoneTemperaturePresence = zone4Temperature
+            state.previousZoneNameMotion = zone4Name
+            state.previousZoneTemperatureMotion = zone4Temperature
+            state.previousZoneNameContact = zone4Name
+
+            unschedule(boostOff)
+            
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4Name,zone4Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone1, location.timeZone).time && timeNow < timeToday(zone2, location.timeZone).time && !state.zone1Set) { 
+            // Are we between 1st zone and 2nd zone                
+
+            log.debug "SetRequiredZone: Tue-Thu - Zone 1"
+
+            // Set the flag to specify what zone we are
+            state.zone1Set = true
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+
+            // Disable any boost mode
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone1Name
+            state.previousTemperatureBoost = zone1Temperature
+            state.previousZoneNamePresence = zone1Name
+            state.previousZoneTemperaturePresence = zone1Temperature
+            state.previousZoneNameMotion = zone1Name
+            state.previousZoneTemperatureMotion = zone1Temperature
+            state.previousZoneNameContact = zone1Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone1Name,zone1Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone2, location.timeZone).time && timeNow < timeToday(zone3, location.timeZone).time && !state.zone2Set) { 
+            // Are we between 2nd zone and 3rd zone
+
+            log.debug "SetRequiredZone: Tue-Thu - Zone 2"
+
+            state.zone1Set = false
+            state.zone2Set = true
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone2Name
+            state.previousTemperatureBoost = zone2Temperature
+            state.previousZoneNamePresence = zone2Name
+            state.previousZoneTemperaturePresence = zone2Temperature
+            state.previousZoneNameMotion = zone2Name
+            state.previousZoneTemperatureMotion = zone2Temperature
+            state.previousZoneNameContact = zone2Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone2Name,zone2Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone3, location.timeZone).time && timeNow < timeToday(zone4, location.timeZone).time && !state.zone3Set) { 
+            // Are we between 3rd zone and 4th zone    
+
+            log.debug "SetRequiredZone: Tue-Thu - Zone 3"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = true
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone3Name
+            state.previousTemperatureBoost = zone3Temperature
+            state.previousZoneNamePresence = zone3Name
+            state.previousZoneTemperaturePresence = zone3Temperature
+            state.previousZoneNameMotion = zone3Name
+            state.previousZoneTemperatureMotion = zone3Temperature
+            state.previousZoneNameContact = zone3Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone3Name,zone3Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone4, location.timeZone).time && timeNow < midnightToday.time && !state.zone4Set) { 
+            // Are we between 4th zone and midnight, we're in zone 4    
+
+            log.debug "SetRequiredZone: Tue-Thu - Zone 4 (upto midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = true
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4Name
+            state.previousTemperatureBoost = zone4Temperature
+            state.previousZoneNamePresence = zone4Name
+            state.previousZoneTemperaturePresence = zone4Temperature
+            state.previousZoneNameMotion = zone4Name
+            state.previousZoneTemperatureMotion = zone4Temperature
+            state.previousZoneNameContact = zone4Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4Name,zone4Temperature)     
+            }
+        }
+
+        break
+
+        case Calendar.FRIDAY:
+
+        if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1Weekend, location.timeZone).time && !state.zone4Set) { 
+            // Are we between midnight Thursday and 1st zone on Friday, we schedule Thursday zone 4                
+
+            log.debug "SetRequiredZone: Thursday - Zone 4 (after midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = true
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4Name
+            state.previousTemperatureBoost = zone4Temperature
+            state.previousZoneNamePresence = zone4Name
+            state.previousZoneTemperaturePresence = zone4Temperature
+            state.previousZoneNameMotion = zone4Name
+            state.previousZoneTemperatureMotion = zone4Temperature
+            state.previousZoneNameContact = zone4Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4Name,zone4Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone1, location.timeZone).time && timeNow < timeToday(zone2, location.timeZone).time && !state.zone1Set) { 
+            // Are we between 1st zone and 2nd zone    
+
+            log.debug "SetRequiredZone: Friday - Zone 1"
+
+            state.zone1Set = true
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone1Name
+            state.previousTemperatureBoost = zone1Temperature
+            state.previousZoneNamePresence = zone1Name
+            state.previousZoneTemperaturePresence = zone1Temperature
+            state.previousZoneNameMotion = zone1Name
+            state.previousZoneTemperatureMotion = zone1Temperature
+            state.previousZoneNameContact = zone1Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone1Name,zone1Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone2, location.timeZone).time && timeNow < timeToday(zone3, location.timeZone).time && !state.zone2Set) { 
+            // Are we between 2nd zone and 3rd zone                
+
+            log.debug "SetRequiredZone: Friday - Zone 2"
+
+            state.zone1Set = false
+            state.zone2Set = true
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone2Name
+            state.previousTemperatureBoost = zone2Temperature
+            state.previousZoneNamePresence = zone2Name
+            state.previousZoneTemperaturePresence = zone2Temperature
+            state.previousZoneNameMotion = zone2Name
+            state.previousZoneTemperatureMotion = zone2Temperature
+            state.previousZoneNameContact = zone2Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone2Name,zone2Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone3, location.timeZone).time && timeNow < timeToday(zone4, location.timeZone).time && !state.zone3Set) { 
+            // Are we between 3rd zone and 4th zone                
+
+            log.debug "SetRequiredZone: Friday - Zone 3"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = true
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone3Name
+            state.previousTemperatureBoost = zone3Temperature
+            state.previousZoneNamePresence = zone3Name
+            state.previousZoneTemperaturePresence = zone3Temperature
+            state.previousZoneNameMotion = zone3Name
+            state.previousZoneTemperatureMotion = zone3Temperature
+            state.previousZoneNameContact = zone3Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone3Name,zone3Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone4, location.timeZone).time && timeNow < midnightToday.time && !state.zone4Set) { 
+            // Are we between 4th zone Friday and midnight, we schedule Friday zone 4
+
+            log.debug "SetRequiredZone: Friday - Zone 4 (upto midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = true
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4Name
+            state.previousTemperatureBoost = zone4Temperature
+            state.previousZoneNamePresence = zone4Name
+            state.previousZoneTemperaturePresence = zone4Temperature
+            state.previousZoneNameMotion = zone4Name
+            state.previousZoneTemperatureMotion = zone4Temperature
+            state.previousZoneNameContact = zone4Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4Name,zone4Temperature)     
+            }
+        }
+
+        break
+
+        case Calendar.SATURDAY:
+
+        if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1Weekend, location.timeZone).time && !state.zone4Set) { 
+            // Are we between midnight Friday and 1st zone Saturday, we're still in zone 4 from Friday
+
+            log.debug "SetRequiredZone: Friday - Zone 4 (after midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = true
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4Name
+            state.previousTemperatureBoost = zone4Temperature
+            state.previousZoneNamePresence = zone4Name
+            state.previousZoneTemperaturePresence = zone4Temperature
+            state.previousZoneNameMotion = zone4Name
+            state.previousZoneTemperatureMotion = zone4Temperature
+            state.previousZoneNameContact = zone4Name
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4Name,zone4Temperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone1Weekend, location.timeZone).time && timeNow < timeToday(zone2Weekend, location.timeZone).time && !state.zone1WeekendSet) { 
+            // Are we between 1st zone and 2nd zone   
+
+            log.debug "SetRequiredZone: Saturday - Zone 1"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = true
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone1WeekendName
+            state.previousTemperatureBoost = zone1WeekendTemperature
+            state.previousZoneNamePresence = zone1WeekendName
+            state.previousZoneTemperaturePresence = zone1WeekendTemperature
+            state.previousZoneNameMotion = zone1WeekendName
+            state.previousZoneTemperatureMotion = zone1WeekendTemperature
+            state.previousZoneNameContact = zone1WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone1WeekendName,zone1WeekendTemperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone2Weekend, location.timeZone).time && timeNow < timeToday(zone3Weekend, location.timeZone).time && !state.zone2WeekendSet) { 
+            // Are we between 2nd zone and 3rd zone               
+
+            log.debug "SetRequiredZone: Saturday - Zone 2"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = true
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone2WeekendName
+            state.previousTemperatureBoost = zone2WeekendTemperature
+            state.previousZoneNamePresence = zone2WeekendName
+            state.previousZoneTemperaturePresence = zone2WeekendTemperature
+            state.previousZoneNameMotion = zone2WeekendName
+            state.previousZoneTemperatureMotion = zone2WeekendTemperature
+            state.previousZoneNameContact = zone2WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone2WeekendName,zone2WeekendTemperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone3Weekend, location.timeZone).time && timeNow < timeToday(zone4Weekend, location.timeZone).time && !state.zone3WeekendSet) { 
+            // Are we between 3rd zone and 4th zone                
+
+            log.debug "SetRequiredZone: Saturday - Zone 3"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = true
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone3WeekendName
+            state.previousTemperatureBoost = zone3WeekendTemperature
+            state.previousZoneNamePresence = zone3WeekendName
+            state.previousZoneTemperaturePresence = zone3WeekendTemperature
+            state.previousZoneNameMotion = zone3WeekendName
+            state.previousZoneTemperatureMotion = zone3WeekendTemperature
+            state.previousZoneNameContact = zone3WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone3WeekendName,zone3WeekendTemperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone4Weekend, location.timeZone).time && timeNow < midnightToday.time && !state.zone4WeekendSet) { 
+            // Are we between 4th zone and midnight, schedule zone 4                
+
+            log.debug "SetRequiredZone: Saturday - Zone 4 (upto midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = true
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4WeekendName
+            state.previousTemperatureBoost = zone4WeekendTemperature
+            state.previousZoneNamePresence = zone4WeekendName
+            state.previousZoneTemperaturePresence = zone4WeekendTemperature
+            state.previousZoneNameMotion = zone4WeekendName
+            state.previousZoneTemperatureMotion = zone4WeekendTemperature
+            state.previousZoneNameContact = zone4WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4WeekendName,zone4WeekendTemperature)     
+            }
+        }
+
+        break
+
+        case Calendar.SUNDAY:
+
+        if (timeNow >= (midnightToday - 1).time && timeNow < timeToday(zone1, location.timeZone).time && !state.zone4WeekendSet) { 
+            // Are we between midnight Saturday and 1st zone on Sunday, schedule Saturday Zone 4                
+
+            log.debug "SetRequiredZone: Saturday - Zone 4 (after midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = true
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone4WeekendName
+            state.previousTemperatureBoost = zone4WeekendTemperature
+            state.previousZoneNamePresence = zone4WeekendName
+            state.previousZoneTemperaturePresence = zone4WeekendTemperature
+            state.previousZoneNameMotion = zone4WeekendName
+            state.previousZoneTemperatureMotion = zone4WeekendTemperature
+            state.previousZoneNameContact = zone4WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone4WeekendName,zone4WeekendTemperature)     
+            }
+        }
+
+        if (timeNow >= timeToday(zone1Weekend, location.timeZone).time && timeNow < timeToday(zone2Weekend, location.timeZone).time && !state.zone1WeekendSet) { 
+            // Are we between 1st zone and 2nd zone                
+
+            log.debug "SetRequiredZone: Sunday - Zone 1"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = true
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone1WeekendName
+            state.previousTemperatureBoost = zone1WeekendTemperature
+            state.previousZoneNamePresence = zone1WeekendName
+            state.previousZoneTemperaturePresence = zone1WeekendTemperature
+            state.previousZoneNameMotion = zone1WeekendName
+            state.previousZoneTemperatureMotion = zone1WeekendTemperature
+            state.previousZoneNameContact = zone1WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone1WeekendName,zone1WeekendTemperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone2Weekend, location.timeZone).time && timeNow < timeToday(zone3Weekend, location.timeZone).time && !state.zone2WeekendSet) { 
+            // Are we between 2nd zone and 3rd zone                
+
+            log.debug "SetRequiredZone: Sunday - Zone 2"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = true
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone2WeekendName
+            state.previousTemperatureBoost = zone2WeekendTemperature
+            state.previousZoneNamePresence = zone2WeekendName
+            state.previousZoneTemperaturePresence = zone2WeekendTemperature
+            state.previousZoneNameMotion = zone2WeekendName
+            state.previousZoneTemperatureMotion = zone2WeekendTemperature
+            state.previousZoneNameContact = zone2WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone2WeekendName,zone2WeekendTemperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone3Weekend, location.timeZone).time && timeNow < timeToday(zone4Weekend, location.timeZone).time && !state.zone3WeekendSet) { 
+            // Are we between 3rd zone and 4th zone               
+
+            log.debug "SetRequiredZone: Sunday - Zone 3"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = true
+            state.zone4WeekendSet = false
+            state.boost = false
+            unschedule(boostOff)
+
+            // If a zone change has happened during a boost/presence away/motion away/contact open, then when we leave those states
+            // we will reset/return to the new zone settings and not the values prior to that away state
+            state.previousZoneNameBoost = zone3WeekendName
+            state.previousTemperatureBoost = zone3WeekendTemperature
+            state.previousZoneNamePresence = zone3WeekendName
+            state.previousZoneTemperaturePresence = zone3WeekendTemperature
+            state.previousZoneNameMotion = zone3WeekendName
+            state.previousZoneTemperatureMotion = zone3WeekendTemperature
+            state.previousZoneNameContact = zone3WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone3WeekendName,zone3WeekendTemperature)     
+            }
+        }
+
+        else if (timeNow >= timeToday(zone4Weekend, location.timeZone).time && timeNow < midnightToday.time && !state.zone4WeekendSet) { 
+            // Are we between 4th time Sunday and midnight, schedule Sunday zone 4                
+
+            log.debug "SetRequiredZone: Sunday - Zone 4 (upto midnight)"
+
+            state.zone1Set = false
+            state.zone2Set = false
+            state.zone3Set = false
+            state.zone4Set = false
+            state.zone1WeekendSet = false
+            state.zone2WeekendSet = false
+            state.zone3WeekendSet = false
+            state.zone4WeekendSet = true
+            state.boost = false
+            unschedule(boostOff)
+            state.previousZoneNameBoost = zone4WeekendName
+            state.previousTemperatureBoost = zone4WeekendTemperature
+            state.previousZoneNamePresence = zone4WeekendName
+			state.previousZoneTemperaturePresence = zone4WeekendTemperature
+            state.previousZoneNameMotion = zone4WeekendName
+            state.previousZoneTemperatureMotion = zone4WeekendTemperature
+            state.previousZoneNameContact = zone4WeekendName
+
+            if (state.contact && state.motion && state.presence) {
+                setThermostat(zone3WeekendName,zone3WeekendTemperature)     
+            }
+		}
+	
+    break
     }
+
+/*
+	if ((state.contact && (state.motion || motionAwaySetpoint != null) && (state.presence || presenceAwaySetpoint != null)) || emergencySetpoint !=null) {
+    	setThermostat(zoneName,zoneTemperature)     
+    }
+*/
 }
 // ********************************************************************************************************************
 // Routine to update the virtual thermostat zone name and desired/required temperture
