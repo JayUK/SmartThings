@@ -22,6 +22,7 @@ preferences {
 	}
 	section("Only heat when a contact isn't open (optional, leave blank to not require contact detection)...", hideWhenEmpty: true){
 		input "contacts", "capability.contactSensor", title: "Contact", required: false, multiple: true, hideWhenEmpty: true
+        input "contactDuration", "number", title: "Duration a contact has to be open before heating is turning off (Mins: 1-30)", range: "1..30", required: false, hideWhenEmpty: "contacts"
 	}
  	section("Only heat when a person is present (optional, leave blank to not require presence detection)...", hideWhenEmpty: true){
 		input "presences", "capability.presenceSensor", title: "Presence", required: false, multiple: true, hideWhenEmpty: true
@@ -340,41 +341,6 @@ def boostOff() {
     }
 }
 // ********************************************************************************************************************
-// Handler to process contact sensor events
-def contactHandler(evt) {
-
-    def thermostat = getThermostat()
-    
-    def contactClosed = true 
-
-	// Loop through all the selected contact sensors and look for any that are open
-    for(contactSensor in contacts) {
-    			
-        if (contactSensor.ContactState == "open") {
-			log.debug "ContactHandler: Contact sensor open: $contactSensor"
-            contactClosed = false
-        }
-	}
-    
-    if (state.contact == false && contactClosed) {
-    	// we are already in "contact open" mode, but they are all now closed. Restoring zone name and temperature back to original values
-		log.debug "ContactHandler: Setting zone name back to the previous zone name (temporary until we check what Zone we should be in: $state.previousZoneName"
-        thermostat.setZoneName(state.previousZoneNameContact)
-        state.contact = true
-        evaluateRoutine()                  
-        
-	} else if (state.contact == false && contactClosed == false) {
-        log.debug "ContactHandler: Already in away mode and another contact has gone open - doing nothing"
-    } else if (state.contact && contactClosed == false ){
-    	// First occurance of a contact sensor going open. Soring current zone name, setting the flag and turning off the heating
-        log.debug "ContactHandler: First contact sensor to become open - Turn heating off"
-		state.previousZoneNameContact = thermostat.currentValue("zoneName")
-		thermostat.setZoneName("Contact: Open")
-		state.contact = false
-        heatingOff()
-	}
-}
-// ********************************************************************************************************************
 // Handler to deal with presence events. It's a bit complicated as it supports a configurable minimum time for a presence 
 // to stay active. Eg: if configured for 5 minutes, if it detects a presence and then that presence goes away 3 minutes
 // after they arrived, then the status wont change to away for another 2 minutes (3 + 2 = minimum presence was was 5 minutes)
@@ -533,6 +499,57 @@ def motionOff() {
         	thermostat.setZoneName("Motion: Away")
             heatingOff()
         }
+}
+// ********************************************************************************************************************
+// Handler to deal with any detected contacts
+def contactHandler(evt) {
+               
+    log.debug "ContactHandler: Event occured: $evt.value"
+    
+    def contactOpen = false
+
+	// Loop through each selected contact sensor
+	for(contactSensor in contacts) {
+        if (contactSensor.ContactState == "open") {
+            log.debug "ContactHandler: A sensor is showing activity: $contactSensor"
+            contactOpen = true
+        }
+    }
+
+	// We've previously detected an open contact, but now they are all closed
+	if (state.contact == false && contactOpen == false) {
+        log.debug "ContactHandler: Contacts closed detected and we're in away mode. Exiting away mode: Resetting zone details and unscheduling contactOff"
+        thermostat.setZoneName(state.previousZoneNameContact) 
+        // Reset the flag, unschedule any pending "contact away" events
+        state.contact = true
+        unschedule (contactOff)
+        evaluateRoutine()     
+    } else if (state.contact == false && contactOpen) {
+		log.debug "ContactHandler: Contact open and already in away mode. Doing nothing"
+    } else if (state.contact && contactOpen) {
+    	// First occurance of an open contact, scheduling the "away" mode to happen after the specified delay
+    	log.debug "ContactHandler: First occurance of an open contact, so scheduling/rescheduling contactOff to run from now plus duration time"
+        runIn(contactDuration*60, contactOff)
+    } else if (state.contact && contactOpen == false) {
+    	log.debug "ContactHandler: Detected all contacts closed while in the scheduled 'away' mode phase, cancelling schedule and returning back to normal"
+        unschedule (contactOff)
+        evaluateRoutine()
+    }
+}
+// ********************************************************************************************************************
+// Change the thermostat to Contact open mode
+def contactOff() {
+	
+    log.debug "ContactOff: Executing"
+    
+    // Store the current thermostat values
+    state.previousZoneNameContact = thermostat.currentValue("zoneName")  
+      
+    state.contact = false
+      
+    log.debug "ContactOff: Turning off heating"
+    thermostat.setZoneName("Contact: Open")
+    heatingOff()
 }
 // ********************************************************************************************************************
 // Changing the thermostat to Presence Away mode
@@ -851,7 +868,7 @@ def setRequiredZone() {
             state.previousZoneTemperatureMotion = zone4WeekendTemperature
             state.previousZoneNameContact = zone4WeekendName
 
-            if ((state.contact && state.motion && state.presence) || emergencySetpoint !=null) {
+            if (state.contact && state.motion && state.presence) {
                 setThermostat(zone4WeekendName,zone4WeekendTemperature)     
             }
        } 
@@ -1620,18 +1637,11 @@ def setRequiredZone() {
             state.previousZoneNameContact = zone4WeekendName
 
             if (state.contact && state.motion && state.presence) {
-                setThermostat(zone3WeekendName,zone3WeekendTemperature)     
+                setThermostat(zone4WeekendName,zone4WeekendTemperature)     
             }
 		}
-	
     break
     }
-
-/*
-	if ((state.contact && (state.motion || motionAwaySetpoint != null) && (state.presence || presenceAwaySetpoint != null)) || emergencySetpoint !=null) {
-    	setThermostat(zoneName,zoneTemperature)     
-    }
-*/
 }
 // ********************************************************************************************************************
 // Routine to update the virtual thermostat zone name and desired/required temperture
