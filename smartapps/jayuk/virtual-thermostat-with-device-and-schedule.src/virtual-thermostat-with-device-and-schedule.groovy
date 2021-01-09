@@ -131,15 +131,15 @@ def installed()
     
 }
 // ********************************************************************************************************************
-// Create the Thermostat device (used in conjuction the the Virtual thermostat Device Handler
+// Create the Thermostat device (used in conjuction the the Virtual Thermostat Device With Schedule Device Handler
 def createDevice() {
 	def thermostat
 	def label = app.getLabel()
 
-	log.debug "CreateDevice: Create device with id: pmvt$state.deviceID, named: $label"
+	log.debug "CreateDevice: Create device with id: pmvtws$state.deviceID, named: $label"
 	
 	try {
-		thermostat = addChildDevice("JayUK", "Virtual Thermostat Device", "pmvt" + state.deviceID, null, [label: label, name: label, completedSetup: true])
+		thermostat = addChildDevice("JayUK", "Virtual Thermostat Device With Schedule", "pmvtws" + state.deviceID, null, [label: label, name: label, completedSetup: true])
 	} catch(e) {
 		log.error("CreateDevice: Caught exception", e)
 	}
@@ -150,14 +150,14 @@ def createDevice() {
 // Function used to find the Virtual Thermostat Device
 def getThermostat() {
 	def child = getChildDevices().find {
-	d -> d.deviceNetworkId.startsWith("pmvt" + state.deviceID)
+	d -> d.deviceNetworkId.startsWith("pmvtws" + state.deviceID)
 	}
 	return child
 }
 // ********************************************************************************************************************
-// Routine to delete the Virtual Thermostat Device
+// Routine to delete the Virtual Thermostat Device With Schedule
 def uninstalled() {
-    	deleteChildDevice("pmvt" + state.deviceID)
+    	deleteChildDevice("pmvtws" + state.deviceID)
 }
 // ********************************************************************************************************************
 // Routine that is called each time the Virtual Thermostat is configured
@@ -169,7 +169,7 @@ def updated() {
 	// Get the actual Virtual Thermostat device object
 	def thermostat = getThermostat()
 
-	// If we have found the Virtual Thermostat device then we'll create one
+	// If we havent found the Virtual Thermostat device then we'll create one
 	if(thermostat == null) {
 		log.debug "Updated: Creating thermostat"
 		thermostat = createDevice()
