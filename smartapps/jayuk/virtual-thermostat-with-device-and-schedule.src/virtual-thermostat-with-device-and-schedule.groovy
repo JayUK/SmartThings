@@ -14,8 +14,10 @@ definition(
 )
 // ********************************************************************************************************************
 preferences {
-	section("Choose a temperature sensor(s)... (If multiple sensors are selected, the average value will be used)"){
+	section("Temperature sensor(s)... (If multiple sensors are selected, the average value will be used)"){
 		input "sensors", "capability.temperatureMeasurement", title: "Sensor", multiple: true, required: true
+        input "sensorMinimum", "number", title: "Minimum value that the sensor is deemed valid", required: true, defaultValue: 10
+        input "sensorMaximum", "number", title: "Maximum value that the sensor is deemed valid", required: true, defaultValue: 40
 	}
 	section("Select the heater outlet(s)... "){
 		input "outlets", "capability.switch", title: "Outlets", multiple: true, required: true
@@ -258,11 +260,21 @@ def initialize() {
 def getAverageTemperature() {
 	def total = 0;
 	def count = 0;
-
+	def sensorTemperature = 0;
+    def sensorName = "";
+	
 	for(sensor in sensors) {
-		total += sensor.currentValue("temperature")
-		thermostat.setIndividualTemperature(sensor.currentValue("temperature"), count, sensor.label)
-		count++
+    	sensorTemperature = sensor.currentValue("temperature")
+        sensorName = sensor.label
+        
+        // Only include sensors that are within the specified range (rules out invalid/faulty sensors)
+    	if (sensorTemperature >= sensorMinimum && sensorTemperature <= sensorMaximum) {
+			total += sensorTemperature
+			thermostat.setIndividualTemperature(sensorTemperature, count, sensorName)
+			count++
+        } else {
+        	log.debug "Sensor: $sensorName is out of range ($sensorMinimum to $sensorMaximum): sensorTemperature)"
+        }
 	}
 	return total / count
 }
