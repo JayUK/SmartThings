@@ -1,5 +1,5 @@
 metadata {
-	definition (name: "Virtual Thermostat Device With Schedule", namespace: "JayUK", author: "JayUK") {
+	definition (name: "Virtual Thermostat Device", namespace: "JayUK", author: "JayUK") {
 		capability "Actuator"
 		capability "Refresh"
 		capability "Sensor"
@@ -25,17 +25,14 @@ metadata {
 		command "changeMode"
 		command "setVirtualTemperature", ["string"]
 		command "setHeatingStatus", ["boolean"]
-		command "setEmergencyMode", ["boolean"]
 		command "setHeatingOff", ["boolean"]
-		command "setZoneName", ["string"]
-
 		attribute "temperatureUnit", "string"
 		attribute "targetTemp", "string"
 		attribute "debugOn", "string"
 		attribute "safetyTempMin", "string"
 		attribute "safetyTempMax", "string"
 		attribute "safetyTempExceeded", "string"
-		attribute "zoneName", "string"
+	
 	}
 
 	simulator {
@@ -116,10 +113,6 @@ metadata {
 			state "", label: ''
 		} */ 
 
-		valueTile("zoneName", "device.zoneName",  width: 1, height: 1, decoration: "flat") {
-			state "default", label:'${currentValue}', defaultState: true
-		}
-
 		valueTile("tempName1", "device.name1",  width: 1, height: 1, decoration: "flat") {
 			state "default", label:'${currentValue}', defaultState: true
 		}
@@ -152,30 +145,12 @@ metadata {
 			state "default", label:'${currentValue}°', defaultState: true
 		}
 
-		valueTile("todayTimeLabel", "timelabel", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-			state "default", label:'Time On Today (HH:MM)', defaultState: true
-		}
-
-		valueTile("yesterdayTimeLabel", "timelabel2", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-			state "default", label:'Time On Yesterday (HH:MM)', defaultState: true
-		}
-
-		valueTile("todayTime", "device.timeOnToday", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-			state "default", label:'${currentValue}', defaultState: true
-		}
-
-		valueTile("yesterdayTime", "device.timeOnYesterday", width: 3, height: 1, canChangeIcon: true, decoration: "flat") {
-			state "default", label:'${currentValue}', defaultState: true
-		}
-
 		main("temp2")
 		details( ["temperature", "thermostatMode",
 		"heatingSetpointDown", "heatingSetpoint", "heatingSetpointUp",
 		"heatSliderControl", "offBtn", "heatBtn", "refresh",
 		"zoneName", "tempName1", "tempName2", "tempName3", "tempName4",
-		"tempSensor1", "tempSensor2", "tempSensor3", "tempSensor4",
-		"todayTimeLabel", "yesterdayTimeLabel",
-		"todayTime", "yesterdayTime"] )
+		"tempSensor1", "tempSensor2", "tempSensor3", "tempSensor4" )
 	}
 }
 
@@ -252,12 +227,6 @@ def getTemperature() {
 	return device.currentValue("temperature")
 }
 
-def setZoneName(zoneName) {
-	log.debug "Setting Zone name to: $zoneName"
-	sendEvent(name:"zoneName", value: zoneName, unit: unitString())
-	refresh()
-}
-
 def setHeatingSetpoint(temperature) {
 	log.debug "Setting temperature to: $temperature"
 	sendEvent(name:"thermostatSetpoint", value: temperature, unit: unitString())
@@ -310,7 +279,6 @@ def refresh() {
 	sendEvent(name: "thermostatSetpoint", value: getThermostatSetpoint(), unit: unitString())
 	sendEvent(name: "heatingSetpoint", value: getHeatingSetpoint(), unit: unitString())
 	sendEvent(name: "temperature", value: getTemperature(), unit: unitString())    
-	sendEvent(name: "zoneName", value: getZoneName(), unit: unitString())
 
 	runIn(10,refresh)
 	//* done()
@@ -330,10 +298,6 @@ def getThermostatSetpoint() {
 
 def getHeatingSetpoint() {
 	return device.currentValue("heatingSetpoint")
-}
-
-def getZoneName() {
-	return device.currentValue("zoneName")
 }
 
 def poll() {
@@ -415,9 +379,3 @@ def setTemperatureScale(val) {
 	sendEvent(name:"tempScale", value: val, displayed: false)
 }
 
-def setTimings(int today, int yesterday) {
-	String todayFormatted = new GregorianCalendar( 0, 0, 0, 0, 0, today, 0 ).time.format( 'HH:mm' )
-	String yesterdayFormatted = new GregorianCalendar( 0, 0, 0, 0, 0, yesterday, 0 ).time.format( 'HH:mm' )
-	sendEvent(name:"timeOnToday", value: todayFormatted, displayed: true)
-	sendEvent(name:"timeOnYesterday", value: yesterdayFormatted, displayed: true)
-}
