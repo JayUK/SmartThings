@@ -150,7 +150,7 @@ metadata {
 		"heatingSetpointDown", "heatingSetpoint", "heatingSetpointUp",
 		"heatSliderControl", "offBtn", "heatBtn", "refresh",
 		"zoneName", "tempName1", "tempName2", "tempName3", "tempName4",
-		"tempSensor1", "tempSensor2", "tempSensor3", "tempSensor4" )
+		"tempSensor1", "tempSensor2", "tempSensor3", "tempSensor4"])
 	}
 }
 
